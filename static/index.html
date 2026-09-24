@@ -4,8 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>FRP Manager</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://unpkg.com/lucide@latest"></script>
+<link rel="stylesheet" href="/vendor/tailwind.css">
 <style>
   :root { --bg:#0b0f1a; --panel:#131928; --border:#1f2937; --accent:#3b82f6; --text:#e5e7eb; --muted:#6b7280; }
   body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background:var(--bg); color:var(--text); }
@@ -74,7 +73,7 @@
   <header class="border-b border-gray-800 bg-gray-900/50 sticky top-0 z-40 backdrop-blur">
     <div class="px-6 py-3 flex items-center justify-between">
       <div class="flex items-center gap-3">
-        <i data-lucide="router" class="w-6 h-6 text-blue-400"></i>
+        <svg class="w-6 h-6 text-blue-400" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6.01 18H6"/><path d="M10.01 18H10"/><path d="M15 10v4"/><path d="M17.84 7.17a4 4 0 0 0-5.66 0"/><path d="M20.66 4.34a8 8 0 0 0-11.31 0"/></svg>
         <h1 class="text-lg font-semibold">FRP Manager</h1>
         <span id="host-info" class="text-sm text-gray-500"></span>
       </div>
@@ -380,113 +379,6 @@ async function refreshAll() {
   await loadInstances();
 }
 
-function renderDashboard() {
-  const { system, frp, instances_count, containers } = dashboardData;
-  const mem = system.memory;
-  const disk = system.disk;
-  const load = system.load_avg ? system.load_avg.map(x=>x.toFixed(2)).join(' / ') : '-';
-
-  const frpBadges = `
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div class="panel p-4">
-        <div class="flex items-center justify-between mb-2">
-          <h3 class="font-medium">frps (服务端)</h3>
-          <span class="badge ${frp.frps_installed?'badge-green':'badge-gray'}">
-            ${frp.frps_installed ? '已安装' : '未安装'}
-          </span>
-        </div>
-        <p class="text-sm text-gray-400">版本: <code>${escapeHtml(frp.frps_version||'-')}</code></p>
-        <p class="text-sm text-gray-400">位置: <code>${escapeHtml(frp.frps_location||'-')}</code></p>
-      </div>
-      <div class="panel p-4">
-        <div class="flex items-center justify-between mb-2">
-          <h3 class="font-medium">frpc (客户端)</h3>
-          <span class="badge ${frp.frpc_installed?'badge-green':'badge-gray'}">
-            ${frp.frpc_installed ? '已安装' : '未安装'}
-          </span>
-        </div>
-        <p class="text-sm text-gray-400">版本: <code>${escapeHtml(frp.frpc_version||'-')}</code></p>
-        <p class="text-sm text-gray-400">位置: <code>${escapeHtml(frp.frpc_location||'-')}</code></p>
-      </div>
-    </div>
-  `;
-
-  const sysInfo = `
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-      <div class="panel p-3">
-        <p class="text-xs text-gray-500 mb-1">主机名</p>
-        <p class="font-mono text-sm">${escapeHtml(system.hostname)}</p>
-      </div>
-      <div class="panel p-3">
-        <p class="text-xs text-gray-500 mb-1">运行时间</p>
-        <p class="text-sm">${formatUptime(system.uptime_seconds)}</p>
-      </div>
-      <div class="panel p-3">
-        <p class="text-xs text-gray-500 mb-1">CPU</p>
-        <p class="text-sm">${system.cpu_count} 核 · 负载 ${load}</p>
-      </div>
-      <div class="panel p-3">
-        <p class="text-xs text-gray-500 mb-1">Docker</p>
-        <p class="text-sm">${frp.docker_available ? '✓ v'+escapeHtml(frp.docker_version) : '✗ 不可用'}</p>
-      </div>
-    </div>
-  `;
-
-  const resInfo = `
-    <div class="grid grid-cols-2 gap-3">
-      <div class="panel p-3">
-        <p class="text-xs text-gray-500 mb-1">内存 (已用 ${formatBytes(mem.used)} / ${formatBytes(mem.total)})</p>
-        <div class="w-full bg-gray-800 h-2 rounded overflow-hidden">
-          <div class="bg-blue-500 h-full" style="width:${(mem.percent||0)}%"></div>
-        </div>
-      </div>
-      <div class="panel p-3">
-        <p class="text-xs text-gray-500 mb-1">磁盘 (已用 ${formatBytes(disk.used)} / ${formatBytes(disk.total)})</p>
-        <div class="w-full bg-gray-800 h-2 rounded overflow-hidden">
-          <div class="bg-green-500 h-full" style="width:${disk.percent}%"></div>
-        </div>
-      </div>
-    </div>
-  `;
-
-  const containersTable = containers.filter(c => !c.error).map(c => `
-    <tr>
-      <td>${escapeHtml(c.name)}</td>
-      <td><span class="badge badge-blue">${escapeHtml(c.type)}</span></td>
-      <td><code>${escapeHtml(c.image)}</code></td>
-      <td>
-        <span class="badge ${c.running?'badge-green':'badge-red'}">${c.running?'运行中':'已停止'}</span>
-      </td>
-      <td>${escapeHtml((c.ports||[]).join(', ')||'-')}</td>
-    </tr>
-  `).join('');
-
-  document.getElementById('view-dashboard').innerHTML = `
-    <h2 class="text-xl font-semibold mb-4">系统总览</h2>
-    <div class="space-y-4">
-      ${sysInfo}
-      ${resInfo}
-      ${frpBadges}
-      <div class="panel p-4">
-        <div class="flex items-center justify-between mb-3">
-          <h3 class="font-medium">FRP 容器列表 <span class="text-sm text-gray-500 ml-2">共 ${containers.filter(c=>!c.error).length} 个</span></h3>
-          <button class="btn-ghost text-sm" onclick="refreshDashboard()">刷新</button>
-        </div>
-        <table>
-          <thead><tr>
-            <th>名称</th><th>类型</th><th>镜像</th><th>状态</th><th>端口</th>
-          </tr></thead>
-          <tbody>
-            ${containersTable || '<tr><td colspan="5" class="text-center text-gray-500 py-4">暂无 frp 容器</td></tr>'}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  `;
-  document.getElementById('host-info').textContent = `@ ${system.hostname}`;
-}
-
-async function refreshDashboard() { await loadDashboard(); }
 
 // ============ 实例列表 ============
 async function loadInstances() {
@@ -1139,11 +1031,7 @@ function closeModal() {
 }
 
 // ============ 启动 ============
-async function init() {
-  await loadDashboard();
-  lucide.createIcons();
-}
-init();
+// 页面初始化在 DOMContentLoaded 事件里(见上方),此处无额外入口。
 </script>
 </body>
 </html>

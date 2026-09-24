@@ -15,6 +15,7 @@ import os
 import re
 import socketserver
 import threading
+import gzip
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -143,6 +144,38 @@ class FRPMRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_static_gz(self, status, content_type, body, path):
+        """发送静态文件,带 gzip 压缩和缓存头。
+
+        vendor/ 下的大文件(tailwind/lucide)压缩比极高,可省 ~70% 传输量。
+        """
+        enc_type = self.headers.get("Accept-Encoding", "")
+        use_gz = "gzip" in enc_type.lower() and len(body) > 1500
+        # 可压缩类型(文本类)
+        compressible = content_type.startswith(("text/", "application/javascript", "application/json", "image/svg"))
+        use_gz = use_gz and compressible
+
+        final_body = body
+        if use_gz:
+            final_body = gzip.compress(body, compresslevel=6)
+
+        # 缓存策略:vendor/ 下的大库几乎不变,长缓存;index.html 不缓存方便热更
+        if path.startswith("/vendor/"):
+            cache = "public, max-age=604800"   # 7 天
+        else:
+            cache = "no-cache"
+
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(final_body)))
+        self.send_header("Cache-Control", cache)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        if use_gz:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
+        self.end_headers()
+        self.wfile.write(final_body)
+
     def _handle(self, method):
         parsed = urlparse(self.path)
         path = parsed.path
@@ -197,7 +230,7 @@ class FRPMRequestHandler(BaseHTTPRequestHandler):
             static_result = self.router.serve_static(path)
             if static_result:
                 status, ct, body = static_result
-                self._send_bytes(status, ct, body)
+                self._send_static_gz(status, ct, body, path)
                 return
             self._send_json(404, {"error": "not found"})
             return
