@@ -12,7 +12,7 @@ LABEL org.opencontainers.image.licenses="MIT"
 WORKDIR /app
 
 # 拷贝代码
-COPY app.py db.py config_gen.py frp_ops.py http_server.py ./
+COPY app.py auth.py db.py config_gen.py frp_ops.py http_server.py version.py ./
 COPY static/ static/
 COPY scripts/ scripts/
 
