@@ -54,7 +54,6 @@
         <p class="text-sm text-gray-500">登录后继续</p>
       </div>
     </div>
-    <div id="login-error" class="mb-4 p-3 rounded bg-red-900/30 border border-red-700 text-red-300 text-sm hidden"></div>
     <form onsubmit="doLogin(event)">
       <div class="mb-3">
         <label class="block text-sm text-gray-400 mb-1">用户名</label>
@@ -78,10 +77,13 @@
         <h1 class="text-lg font-semibold">FRP Manager</h1>
         <span id="host-info" class="text-sm text-gray-500"></span>
       </div>
-      <nav class="flex gap-1 text-sm">
-        <button onclick="nav('dashboard')" id="nav-dashboard" class="px-3 py-1.5 rounded tab-active">总览</button>
-        <button onclick="nav('instances')" id="nav-instances" class="px-3 py-1.5 rounded tab-inactive">实例管理</button>
-      </nav>
+      <div class="flex items-center gap-4">
+        <div id="user-info" class="hidden"></div>
+        <nav class="flex gap-1 text-sm">
+          <button onclick="nav('dashboard')" id="nav-dashboard" class="px-3 py-1.5 rounded tab-active">总览</button>
+          <button onclick="nav('instances')" id="nav-instances" class="px-3 py-1.5 rounded tab-inactive">实例管理</button>
+        </nav>
+      </div>
     </div>
   </header>
 
@@ -111,11 +113,13 @@ function showLogin(message) {
     overlay.style.display = 'flex';
     document.getElementById('app').style.display = 'none';
   }
-  if (message) {
-    const err = document.getElementById('login-error');
-    if (err) {
+  const err = document.getElementById('login-error');
+  if (err) {
+    if (message) {
       err.textContent = message;
       err.classList.remove('hidden');
+    } else {
+      err.classList.add('hidden');
     }
   }
 }
@@ -196,20 +200,85 @@ function renderUserInfo() {
   if (!currentUsername) return;
   const hostEl = document.getElementById('user-info');
   if (!hostEl) return;
-  hostEl.innerHTML = '<div class="flex items-center gap-3 text-sm">'
-    + '<span class="text-gray-400">用户: <span class="text-gray-200">'+escapeHtml(currentUsername)+'</span></span>'
-    + '<button onclick="doLogout()" class="btn-ghost text-xs px-2 py-1">退出登录</button>'
+  hostEl.classList.remove('hidden');
+  hostEl.innerHTML = '<div class="flex items-center gap-2 text-sm">'
+    + '<span class="text-gray-400">👤 ' + escapeHtml(currentUsername) + '</span>'
+    + '<button onclick="showChangePasswordModal()" class="btn-ghost text-xs px-2 py-1">修改密码</button>'
+    + '<button onclick="doLogout()" class="btn-ghost text-xs px-2 py-1">退出</button>'
     + '</div>';
 }
 
 // 页面加载入口
 window.addEventListener('DOMContentLoaded', async () => {
+  // 先清空任何残留的错误消息
+  const loginErr = document.getElementById('login-error');
+  if (loginErr) loginErr.classList.add('hidden');
+  
   await checkAuth();
   if (authToken) {
     renderUserInfo();
     loadDashboard();
   }
 });
+
+// ============ 修改密码 ============
+function showChangePasswordModal() {
+  const modal = document.getElementById('modal-container');
+  if (!modal) return;
+  modal.innerHTML = `
+    <div class="panel p-6 w-96 max-w-[90%]">
+      <h3 class="text-lg font-semibold mb-4">修改密码</h3>
+      <div id="cp-error" class="mb-3 p-2 rounded bg-red-900/30 border border-red-700 text-red-300 text-sm hidden"></div>
+      <form onsubmit="doChangePassword(event)">
+        <div class="mb-3">
+          <label class="block text-sm text-gray-400 mb-1">当前密码</label>
+          <input type="password" id="cp-old" class="input" required>
+        </div>
+        <div class="mb-3">
+          <label class="block text-sm text-gray-400 mb-1">新密码(至少 6 位)</label>
+          <input type="password" id="cp-new" class="input" minlength="6" required>
+        </div>
+        <div class="mb-4">
+          <label class="block text-sm text-gray-400 mb-1">确认新密码</label>
+          <input type="password" id="cp-confirm" class="input" minlength="6" required>
+        </div>
+        <div class="flex gap-2">
+          <button type="submit" class="btn-primary flex-1 py-2">保存</button>
+          <button type="button" onclick="closeModal()" class="btn-ghost flex-1 py-2">取消</button>
+        </div>
+      </form>
+    </div>
+  `;
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+}
+
+async function doChangePassword(event) {
+  event.preventDefault();
+  const oldPassword = document.getElementById('cp-old').value;
+  const newPassword = document.getElementById('cp-new').value;
+  const confirmPassword = document.getElementById('cp-confirm').value;
+  const errEl = document.getElementById('cp-error');
+  errEl.classList.add('hidden');
+  const btn = event.target.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  btn.textContent = '保存中...';
+  try {
+    const data = await api('/api/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ old_password: oldPassword, new_password: newPassword, confirm_password: confirmPassword }),
+    });
+    toast('密码修改成功,请重新登录', 'success');
+    closeModal();
+    // 修改密码后会话失效,自动登出
+    setTimeout(() => doLogout(), 1500);
+  } catch(e) {
+    errEl.textContent = e.message || '修改失败';
+    errEl.classList.remove('hidden');
+    btn.disabled = false;
+    btn.textContent = '保存';
+  }
+}
 
 // ============ 全局状态 ============
 let currentView = 'dashboard';
@@ -230,12 +299,10 @@ async function api(url, options={}) {
   const resp = await fetch(url, opts);
   // 处理 401:未登录或会话过期,跳转到登录
   if (resp.status === 401) {
-    const err = await resp.json().catch(() => ({}));
-    if (err.login_required) {
-      showLogin(err.error || '会话已过期,请重新登录');
-      throw new Error(err.error || '请重新登录');
-    }
-    throw new Error(err.error || `HTTP ${resp.status}`);
+    localStorage.removeItem('frpm_token');
+    authToken = '';
+    showLogin('');  // 不显示错误消息,直接显示登录页
+    return;
   }
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
