@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FRP Manager</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+  :root { --bg:#0b0f1a; --panel:#131928; --border:#1f2937; --accent:#3b82f6; --text:#e5e7eb; --muted:#6b7280; }
+  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background:var(--bg); color:var(--text); }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 0.5rem; }
+  .btn-primary { background: var(--accent); color: white; padding: 0.5rem 1rem; border-radius: 0.25rem; font-weight: 500; }
+  .btn-primary:hover { background: #2563eb; }
+  .btn-danger { background: #dc2626; color: white; padding: 0.5rem 1rem; border-radius: 0.25rem; }
+  .btn-danger:hover { background: #b91c1c; }
+  .btn-ghost { background: transparent; color: var(--text); padding: 0.25rem 0.5rem; border-radius: 0.25rem; border: 1px solid var(--border); }
+  .btn-ghost:hover { background: #1f2937; }
+  .input { background: #0b1220; border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.6rem; border-radius: 0.25rem; width: 100%; }
+  .input:focus { outline: none; border-color: var(--accent); }
+  .badge { padding: 0.15rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; }
+  .badge-green { background: #065f46; color: #6ee7b7; }
+  .badge-red { background: #7f1d1d; color: #fca5a5; }
+  .badge-gray { background: #1f2937; color: #9ca3af; }
+  .badge-blue { background: #1e3a8a; color: #93c5fd; }
+  .tab-active { background: var(--accent); color: white; }
+  .tab-inactive { color: var(--muted); }
+  .tab-inactive:hover { color: var(--text); }
+  table { width: 100%; }
+  th { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 500; font-size: 0.875rem; }
+  td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); }
+  .modal-bg { background: rgba(0,0,0,0.7); }
+  #toast-container { position: fixed; bottom: 1rem; right: 1rem; z-index: 100; display: flex; flex-direction: column; gap: 0.5rem; }
+  .toast { padding: 0.75rem 1rem; border-radius: 0.5rem; color: white; font-size: 0.875rem; min-width: 200px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); animation: slideIn 0.3s; }
+  .toast-success { background: #065f46; border-left: 4px solid #10b981; }
+  .toast-error { background: #7f1d1d; border-left: 4px solid #ef4444; }
+  .toast-info { background: #1e3a8a; border-left: 4px solid #3b82f6; }
+  @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+  details summary { cursor: pointer; }
+  .checkbox-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0; }
+  code { background: #0b1220; padding: 0.1rem 0.3rem; border-radius: 0.2rem; font-size: 0.875rem; color: #93c5fd; }
+  .spinner { display: inline-block; width: 1rem; height: 1rem; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body class="min-h-screen">
+<div id="app">
+  <!-- 顶栏 -->
+  <header class="border-b border-gray-800 bg-gray-900/50 sticky top-0 z-40 backdrop-blur">
+    <div class="px-6 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <i data-lucide="router" class="w-6 h-6 text-blue-400"></i>
+        <h1 class="text-lg font-semibold">FRP Manager</h1>
+        <span id="host-info" class="text-sm text-gray-500"></span>
+      </div>
+      <nav class="flex gap-1 text-sm">
+        <button onclick="nav('dashboard')" id="nav-dashboard" class="px-3 py-1.5 rounded tab-active">总览</button>
+        <button onclick="nav('instances')" id="nav-instances" class="px-3 py-1.5 rounded tab-inactive">实例管理</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="p-6 max-w-7xl mx-auto">
+    <!-- 总览页 -->
+    <div id="view-dashboard"></div>
+    <!-- 实例管理页 -->
+    <div id="view-instances" class="hidden"></div>
+    <!-- 实例详情页 -->
+    <div id="view-detail" class="hidden"></div>
+  </main>
+</div>
+
+<!-- 模态框容器 -->
+<div id="modal-container" class="fixed inset-0 modal-bg hidden items-center justify-center z-50"></div>
+<!-- Toast 容器 -->
+<div id="toast-container"></div>
+
+<script>
+// ============ 全局状态 ============
+let currentView = 'dashboard';
+let dashboardData = null;
+let instancesCache = [];
+let logStream = null;
+
+// ============ 工具函数 ============
+async function api(url, options={}) {
+  const opts = { headers: {'Content-Type': 'application/json'}, ...options };
+  const resp = await fetch(url, opts);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+  return data;
+}
+
+function toast(msg, type='info') {
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024; const sizes = ['B','KB','MB','GB','TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
+}
+
+function formatUptime(s) {
+  if (!s) return '-';
+  const d = Math.floor(s/86400), h = Math.floor((s%86400)/3600), m = Math.floor((s%3600)/60);
+  if (d) return `${d}天${h}小时`;
+  if (h) return `${h}小时${m}分`;
+  return `${m}分钟`;
+}
+
+function timeAgo(ts) {
+  if (!ts) return '-';
+  const diff = Date.now()/1000 - ts;
+  if (diff < 60) return `${Math.floor(diff)}秒前`;
+  if (diff < 3600) return `${Math.floor(diff/60)}分钟前`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}小时前`;
+  return `${Math.floor(diff/86400)}天前`;
+}
+
+// ============ 导航 ============
+function nav(view) {
+  currentView = view;
+  ['dashboard','instances','detail'].forEach(v => {
+    document.getElementById(`view-${v}`).classList.add('hidden');
+  });
+  document.getElementById(`view-${view}`).classList.remove('hidden');
+  ['dashboard','instances'].forEach(v => {
+    const el = document.getElementById(`nav-${v}`);
+    if (v === view) el.className = 'px-3 py-1.5 rounded tab-active';
+    else el.className = 'px-3 py-1.5 rounded tab-inactive';
+  });
+  if (view === 'dashboard') loadDashboard();
+  if (view === 'instances') loadInstances();
+  if (logStream) { logStream.close(); logStream = null; }
+}
+
+// ============ 总览页 ============
+async function loadDashboard() {
+  try {
+    dashboardData = await api('/api/dashboard');
+    renderDashboard();
+  } catch (e) {
+    document.getElementById('view-dashboard').innerHTML = `<div class="text-red-400">加载失败: ${e.message}</div>`;
+  }
+}
+
+function renderDashboard() {
+  const { system, frp, instances_count, containers } = dashboardData;
+  const mem = system.memory;
+  const disk = system.disk;
+  const load = system.load_avg ? system.load_avg.map(x=>x.toFixed(2)).join(' / ') : '-';
+
+  const frpBadges = `
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="panel p-4">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="font-medium">frps (服务端)</h3>
+          <span class="badge ${frp.frps_installed?'badge-green':'badge-gray'}">
+            ${frp.frps_installed ? '已安装' : '未安装'}
+          </span>
+        </div>
+        <p class="text-sm text-gray-400">版本: <code>${escapeHtml(frp.frps_version||'-')}</code></p>
+        <p class="text-sm text-gray-400">位置: <code>${escapeHtml(frp.frps_location||'-')}</code></p>
+      </div>
+      <div class="panel p-4">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="font-medium">frpc (客户端)</h3>
+          <span class="badge ${frp.frpc_installed?'badge-green':'badge-gray'}">
+            ${frp.frpc_installed ? '已安装' : '未安装'}
+          </span>
+        </div>
+        <p class="text-sm text-gray-400">版本: <code>${escapeHtml(frp.frpc_version||'-')}</code></p>
+        <p class="text-sm text-gray-400">位置: <code>${escapeHtml(frp.frpc_location||'-')}</code></p>
+      </div>
+    </div>
+  `;
+
+  const sysInfo = `
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div class="panel p-3">
+        <p class="text-xs text-gray-500 mb-1">主机名</p>
+        <p class="font-mono text-sm">${escapeHtml(system.hostname)}</p>
+      </div>
+      <div class="panel p-3">
+        <p class="text-xs text-gray-500 mb-1">运行时间</p>
+        <p class="text-sm">${formatUptime(system.uptime_seconds)}</p>
+      </div>
+      <div class="panel p-3">
+        <p class="text-xs text-gray-500 mb-1">CPU</p>
+        <p class="text-sm">${system.cpu_count} 核 · 负载 ${load}</p>
+      </div>
+      <div class="panel p-3">
+        <p class="text-xs text-gray-500 mb-1">Docker</p>
+        <p class="text-sm">${frp.docker_available ? '✓ v'+escapeHtml(frp.docker_version) : '✗ 不可用'}</p>
+      </div>
+    </div>
+  `;
+
+  const resInfo = `
+    <div class="grid grid-cols-2 gap-3">
+      <div class="panel p-3">
+        <p class="text-xs text-gray-500 mb-1">内存 (已用 ${formatBytes(mem.used)} / ${formatBytes(mem.total)})</p>
+        <div class="w-full bg-gray-800 h-2 rounded overflow-hidden">
+          <div class="bg-blue-500 h-full" style="width:${(mem.percent||0)}%"></div>
+        </div>
+      </div>
+      <div class="panel p-3">
+        <p class="text-xs text-gray-500 mb-1">磁盘 (已用 ${formatBytes(disk.used)} / ${formatBytes(disk.total)})</p>
+        <div class="w-full bg-gray-800 h-2 rounded overflow-hidden">
+          <div class="bg-green-500 h-full" style="width:${disk.percent}%"></div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const containersTable = containers.filter(c => !c.error).map(c => `
+    <tr>
+      <td>${escapeHtml(c.name)}</td>
+      <td><span class="badge badge-blue">${escapeHtml(c.type)}</span></td>
+      <td><code>${escapeHtml(c.image)}</code></td>
+      <td>
+        <span class="badge ${c.running?'badge-green':'badge-red'}">${c.running?'运行中':'已停止'}</span>
+      </td>
+      <td>${escapeHtml((c.ports||[]).join(', ')||'-')}</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('view-dashboard').innerHTML = `
+    <h2 class="text-xl font-semibold mb-4">系统总览</h2>
+    <div class="space-y-4">
+      ${sysInfo}
+      ${resInfo}
+      ${frpBadges}
+      <div class="panel p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="font-medium">FRP 容器列表 <span class="text-sm text-gray-500 ml-2">共 ${containers.filter(c=>!c.error).length} 个</span></h3>
+          <button class="btn-ghost text-sm" onclick="refreshDashboard()">刷新</button>
+        </div>
+        <table>
+          <thead><tr>
+            <th>名称</th><th>类型</th><th>镜像</th><th>状态</th><th>端口</th>
+          </tr></thead>
+          <tbody>
+            ${containersTable || '<tr><td colspan="5" class="text-center text-gray-500 py-4">暂无 frp 容器</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  document.getElementById('host-info').textContent = `@ ${system.hostname}`;
+}
+
+async function refreshDashboard() { loadDashboard(); }
+
+// ============ 实例列表 ============
+async function loadInstances() {
+  try {
+    instancesCache = await api('/api/instances');
+    renderInstances();
+  } catch (e) {
+    document.getElementById('view-instances').innerHTML = `<div class="text-red-400">加载失败: ${e.message}</div>`;
+  }
+}
+
+function renderInstances() {
+  const frpInfo = dashboardData?.frp || {};
+  let html = `
+    <h2 class="text-xl font-semibold mb-4">实例管理</h2>
+    <div class="panel p-4 mb-4 flex items-center justify-between flex-wrap gap-2">
+      <div class="text-sm text-gray-400">
+        已安装实例: <span class="text-white font-medium">${instancesCache.length}</span>
+        ${frpInfo.mode ? `<span class="ml-3 text-gray-500">部署模式: <code>${escapeHtml(frpInfo.mode)}</code></span>` : ''}
+      </div>
+      <div class="flex gap-2">
+        <button onclick="showNewInstanceModal()" class="btn-primary text-sm">+ 新建实例</button>
+        <button onclick="refreshDashboard();nav('dashboard')" class="btn-ghost text-sm">查看总览</button>
+      </div>
+    </div>
+    <div class="panel p-4">
+      <table>
+        <thead><tr>
+          <th>名称</th><th>类型</th><th>部署模式</th><th>状态</th><th>配置</th><th>更新</th><th>操作</th>
+        </tr></thead>
+        <tbody>
+          ${instancesCache.length === 0 ? `<tr><td colspan="7" class="text-center text-gray-500 py-8">暂无实例,点击"新建实例"开始</td></tr>` :
+            instancesCache.map(i => `
+            <tr>
+              <td class="font-medium">${escapeHtml(i.name)}</td>
+              <td><span class="badge ${i.type==='frps'?'badge-blue':'badge-gray'}">${i.type}</span></td>
+              <td><code>${escapeHtml(i.deploy_mode)}</code></td>
+              <td><span class="badge ${i.status?.running?'badge-green':'badge-red'}">${i.status?.running?'运行中':(i.status?.status||'未启动')}</span></td>
+              <td>${i.config_exists ? '<span class="text-green-400">✓</span>' : '<span class="text-red-400">✗</span>'}</td>
+              <td>${timeAgo(i.updated_at)}</td>
+              <td class="space-x-1">
+                <button class="btn-ghost text-xs" onclick="showDetail(${i.id})">详情</button>
+                ${i.status?.running ? '' : `<button class="btn-ghost text-xs text-green-400" onclick="startInstance(${i.id})">启动</button>`}
+                ${i.status?.running ? `<button class="btn-ghost text-xs text-yellow-400" onclick="stopInstance(${i.id})">停止</button>` : ''}
+                <button class="btn-ghost text-xs" onclick="restartInstance(${i.id})">重启</button>
+                <button class="btn-ghost text-xs text-red-400" onclick="deleteInstance(${i.id})">删除</button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+  document.getElementById('view-instances').innerHTML = html;
+}
+
+// ============ 新建实例模态框 ============
+let newInstanceState = { type: 'frpc', deploy_mode: 'docker', servers: [], proxies: [] };
+
+function showNewInstanceModal() {
+  const frpInfo = dashboardData?.frp || {};
+  const dockerOk = frpInfo.docker_available;
+  newInstanceState = {
+    type: 'frpc',
+    deploy_mode: dockerOk ? 'docker' : 'binary',
+    servers: [{ name: 'default', serverAddr: '', serverPort: 2005, token: '' }],
+    proxies: [{ name: 'nas-web', type: 'tcp', local_ip: '127.0.0.1', local_port: 8080, remote_port: 2008, custom_domains: [] }]
+  };
+  renderNewInstanceModal();
+}
+
+function renderNewInstanceModal() {
+  const { type, deploy_mode } = newInstanceState;
+  const frpInfo = dashboardData?.frp || {};
+  const dockerOk = frpInfo.docker_available;
+
+  document.getElementById('modal-container').innerHTML = `
+    <div class="bg-gray-900 border border-gray-700 rounded-lg max-w-3xl w-[90%] max-h-[85vh] overflow-y-auto p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold">新建实例</h3>
+        <button onclick="closeModal()" class="text-gray-400 hover:text-white text-xl">&times;</button>
+      </div>
+      <form id="newInstanceForm" class="space-y-4">
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">实例名 <span class="text-red-400">*</span></label>
+            <input type="text" name="name" required pattern="^[a-z][a-z0-9-]{2,30}$"
+              placeholder="frpc-prod" class="input">
+            <p class="text-xs text-gray-500 mt-1">小写字母开头,可用小写字母数字和连字符</p>
+          </div>
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">实例类型 <span class="text-red-400">*</span></label>
+            <select name="type" class="input" onchange="onTypeChange(this.value)">
+              <option value="frpc" ${type==='frpc'?'selected':''}>frpc (客户端)</option>
+              <option value="frps" ${type==='frps'?'selected':''}>frps (服务端)</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">部署模式 <span class="text-red-400">*</span></label>
+          <select name="deploy_mode" class="input" onchange="onDeployChange(this.value)">
+            <option value="docker" ${deploy_mode==='docker'?'selected':''} ${!dockerOk?'disabled':''}>Docker 容器 (推荐)</option>
+            <option value="binary" ${deploy_mode==='binary'?'selected':''}>系统二进制 + systemd</option>
+          </select>
+          ${!dockerOk ? '<p class="text-xs text-yellow-400 mt-1">⚠ 当前 Docker 不可用,请使用二进制模式</p>' : ''}
+        </div>
+
+        <div id="config-fields" class="space-y-4"></div>
+
+        <div class="flex gap-2 justify-end pt-4 border-t border-gray-700">
+          <button type="button" onclick="closeModal()" class="btn-ghost">取消</button>
+          <button type="submit" class="btn-primary">创建</button>
+        </div>
+      </form>
+    </div>
+  `;
+
+  renderConfigFields();
+  document.getElementById('modal-container').classList.remove('hidden');
+  document.getElementById('modal-container').classList.add('flex');
+
+  document.getElementById('newInstanceForm').addEventListener('submit', submitNewInstance);
+}
+
+function renderConfigFields() {
+  const { type } = newInstanceState;
+  let html = '';
+
+  if (type === 'frps') {
+    html = `
+      <div class="bg-blue-900/20 border border-blue-700/40 rounded p-3 mb-4 text-sm text-blue-300">
+        <b>这是什么?</b> frps 是服务端,跑在有公网 IP 的机器上(比如腾讯云)。
+        它监听一个端口,等待 NAS 上的 frpc 连过来,然后把公网请求转发给 NAS。
+        <br><br>
+        <b>简单理解:</b> frps = 一个"中转站",帮没有公网 IP 的 NAS 把服务暴露到公网。
+      </div>
+      <h4 class="font-medium text-blue-400 mb-3">服务端配置 (frps)</h4>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">监听地址 (bindAddr)</label>
+          <input type="text" name="bind_addr" value="0.0.0.0" class="input">
+          <p class="text-xs text-gray-500 mt-1">固定填 <code>0.0.0.0</code>,表示监听所有网卡</p>
+        </div>
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">监听端口 (bindPort) <span class="text-red-400">*</span></label>
+          <input type="number" name="bind_port" value="7000" min="1" max="65535" class="input">
+          <p class="text-xs text-gray-500 mt-1">frpc 连接此端口。注意:需要在安全组放行此端口</p>
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">认证 Token (authToken)</label>
+        <div class="flex gap-2">
+          <input type="text" name="auth_token" value="" class="input flex-1" placeholder="可留空,但建议设置">
+          <button type="button" onclick="generateToken(this)" class="btn-ghost text-sm whitespace-nowrap">🎲 随机生成</button>
+        </div>
+        <p class="text-xs text-gray-500 mt-1">连接密码,frpc 侧必须填一样的。防止别人乱连你的 frps</p>
+      </div>
+      <div class="grid grid-cols-2 gap-3 mt-3">
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">心跳超时 (秒)</label>
+          <input type="number" name="transport_heartbeat_ttl" value="90" class="input">
+          <p class="text-xs text-gray-500 mt-1">多久没心跳就断开,默认 90 秒</p>
+        </div>
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">TCP 保活间隔 (秒)</label>
+          <input type="number" name="transport_tcp_keepalive" value="7200" class="input">
+          <p class="text-xs text-gray-500 mt-1">保持连接不断,默认 7200 秒(2 小时)</p>
+        </div>
+      </div>
+    `;
+  } else {
+    html = `
+      <div class="bg-green-900/20 border border-green-700/40 rounded p-3 mb-4 text-sm text-green-300">
+        <b>这是什么?</b> frpc 是客户端,跑在 NAS 上(没有公网 IP 的机器)。
+        它主动连接腾讯云上的 frps,建立隧道,把 NAS 上的服务暴露到公网。
+        <br><br>
+        <b>简单理解:</b> frpc = NAS 上的"联络员",跟腾讯云的 frps 说"我有个服务在 8080 端口,帮我转发"。
+      </div>
+      <h4 class="font-medium text-green-400 mb-3">客户端配置 (frpc)</h4>
+      <div class="border border-gray-700 rounded p-3 mb-3">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-sm font-medium">① 连接到哪台服务端?</span>
+          <button type="button" onclick="addServer()" class="btn-ghost text-xs">+ 添加</button>
+        </div>
+        <p class="text-xs text-gray-500 mb-3">填腾讯云 frps 的地址和端口(跟 frps 配置里的一致)</p>
+        <div id="servers-section" class="space-y-2"></div>
+      </div>
+      <div class="border border-gray-700 rounded p-3">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-sm font-medium">② 要穿透哪些服务?</span>
+          <button type="button" onclick="addProxy()" class="btn-ghost text-xs">+ 添加</button>
+        </div>
+        <p class="text-xs text-gray-500 mb-3">每条规则 = 把 NAS 上的一个端口,映射到公网上的一个端口</p>
+        <div id="proxies-section" class="space-y-3"></div>
+      </div>
+    `;
+  }
+  document.getElementById('config-fields').innerHTML = html;
+
+  if (type === 'frpc') {
+    renderServersSection();
+    renderProxiesSection();
+  }
+}
+
+function renderServersSection() {
+  const html = newInstanceState.servers.map((s, i) => `
+    <div class="border border-gray-700 rounded p-3 relative" id="server-${i}">
+      <button type="button" onclick="removeServer(${i})" class="absolute top-2 right-2 text-gray-500 hover:text-red-400 text-lg">&times;</button>
+      <div class="grid grid-cols-3 gap-2">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">名称</label>
+          <input type="text" placeholder="default" value="${escapeHtml(s.name||'')}" data-field="name" class="input">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">服务端地址</label>
+          <input type="text" placeholder="如: nas.235300.xyz 或 124.221.238.106" value="${escapeHtml(s.serverAddr||'')}" data-field="serverAddr" class="input">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">端口</label>
+          <input type="number" placeholder="如: 2005" value="${s.serverPort||7000}" data-field="serverPort" class="input">
+        </div>
+      </div>
+      <div class="mt-2">
+        <label class="block text-xs text-gray-500 mb-1">Token (跟服务端 frps 的一致)</label>
+        <input type="text" placeholder="粘贴 frps 配置里的 authToken" value="${escapeHtml(s.token||'')}" data-field="token" class="input">
+      </div>
+    </div>
+  `).join('');
+  document.getElementById('servers-section').innerHTML = html || '<p class="text-center text-gray-500 text-sm py-2">暂无服务端配置</p>';
+}
+
+function renderProxiesSection() {
+  const html = newInstanceState.proxies.map((p, i) => renderProxyRow(p, i)).join('');
+  document.getElementById('proxies-section').innerHTML = html || '<p class="text-center text-gray-500 text-sm py-2">暂无代理规则</p>';
+}
+
+function renderProxyRow(p, i) {
+  const isHttp = ['http','https'].includes(p.type);
+  const isTunnel = ['stcp','xtcp'].includes(p.type);
+  const typeLabels = {
+    tcp: 'TCP 端口转发(最常用,SSH/网页/数据库都行)',
+    udp: 'UDP 端口转发(DNS/游戏服务器等)',
+    http: 'HTTP 反向代理(按域名路由,需要 frps 配 vhostHTTPPort)',
+    https: 'HTTPS 反向代理(按域名路由,需要 frps 配 vhostHTTPSPort)',
+    stcp: '加密 TCP 隧道(需要访问者也跑 frpc,安全性高)',
+    xtcp: '点对点加密隧道(尝试直连,不通再走 frps 中转)',
+  };
+  return `
+    <div class="border border-gray-700 rounded p-3 relative" id="proxy-${i}">
+      <button type="button" onclick="removeProxy(${i})" class="absolute top-2 right-2 text-gray-500 hover:text-red-400 text-lg">&times;</button>
+      <div class="grid grid-cols-2 gap-2 mb-2">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">名称</label>
+          <input type="text" placeholder="如: nas-web" value="${escapeHtml(p.name||'')}" data-field="name" class="input">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">类型</label>
+          <select data-field="type" onchange="onProxyTypeChange(${i}, this.value)" class="input">
+            <option value="tcp" ${p.type==='tcp'?'selected':''}>tcp — TCP 转发</option>
+            <option value="udp" ${p.type==='udp'?'selected':''}>udp — UDP 转发</option>
+            <option value="http" ${p.type==='http'?'selected':''}>http — HTTP 代理</option>
+            <option value="https" ${p.type==='https'?'selected':''}>https — HTTPS 代理</option>
+            <option value="stcp" ${p.type==='stcp'?'selected':''}>stcp — 加密隧道</option>
+            <option value="xtcp" ${p.type==='xtcp'?'selected':''}>xtcp — 点对点隧道</option>
+          </select>
+        </div>
+      </div>
+      <p class="text-xs text-blue-400 mb-2">${typeLabels[p.type] || ''}</p>
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">服务在哪个地址? (localIP)</label>
+          <input type="text" placeholder="127.0.0.1" value="${escapeHtml(p.local_ip||'127.0.0.1')}" data-field="local_ip" class="input">
+          <p class="text-xs text-gray-600 mt-1">127.0.0.1 = 就在本机(NAS自己)。一般不用改</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">NAS 上的服务端口 (localPort)</label>
+          <input type="number" placeholder="如: 8080" value="${p.local_port||''}" data-field="local_port" class="input">
+          <p class="text-xs text-gray-600 mt-1">你要穿透的服务,在 NAS 上跑的端口</p>
+        </div>
+      </div>
+      ${!isHttp ? `<div class="mt-2">
+        <label class="block text-xs text-gray-500 mb-1">腾讯云上开放的端口 (remotePort)</label>
+        <input type="number" placeholder="如: 2008" value="${p.remote_port||''}" data-field="remote_port" class="input">
+        <p class="text-xs text-gray-600 mt-1">访问者通过 <code>nas.235300.xyz:这个端口</code> 到达 NAS。在 2000-2050 内选,别跟已用的冲突</p>
+      </div>` : ''}
+      ${isHttp ? `<div class="mt-2">
+        <label class="block text-xs text-gray-500 mb-1">域名 (逗号分隔)</label>
+        <input type="text" placeholder="如: nas.235300.xyz" value="${escapeHtml((p.custom_domains||[]).join(','))}" data-field="custom_domains" class="input">
+      </div>` : ''}
+      ${isTunnel ? `<div class="mt-2">
+        <label class="block text-xs text-gray-500 mb-1">密钥 (secretKey)</label>
+        <input type="text" placeholder="自定义密钥,访问者也要填一样的" value="${escapeHtml(p.secret_key||'')}" data-field="secret_key" class="input">
+      </div>` : ''}
+    </div>
+  `;
+}
+
+function addServer() {
+  newInstanceState.servers.push({ name: 'srv'+(newInstanceState.servers.length+1), serverAddr: '', serverPort: 7000, token: '' });
+  renderServersSection();
+}
+function removeServer(i) {
+  newInstanceState.servers.splice(i, 1);
+  renderServersSection();
+}
+function addProxy() {
+  const n = newInstanceState.proxies.length + 1;
+  newInstanceState.proxies.push({ name: 'proxy'+n, type: 'tcp', local_ip: '127.0.0.1', local_port: 80, remote_port: 8080+n, custom_domains: [] });
+  renderProxiesSection();
+}
+function removeProxy(i) {
+  newInstanceState.proxies.splice(i, 1);
+  renderProxiesSection();
+}
+function onProxyTypeChange(i, val) {
+  newInstanceState.proxies[i].type = val;
+  // 切换类型时,根据新类型补默认字段
+  if (['http','https'].includes(val)) {
+    newInstanceState.proxies[i].custom_domains = ['example.com'];
+    delete newInstanceState.proxies[i].remote_port;
+  } else if (['tcp','udp'].includes(val)) {
+    newInstanceState.proxies[i].remote_port = newInstanceState.proxies[i].remote_port || (8080+i+1);
+    delete newInstanceState.proxies[i].custom_domains;
+  } else if (['stcp','xtcp'].includes(val)) {
+    newInstanceState.proxies[i].secret_key = newInstanceState.proxies[i].secret_key || '';
+  }
+  renderProxiesSection();
+}
+function onTypeChange(val) {
+  // 切换 frps/frpc 时,重置配置字段
+  newInstanceState.type = val;
+  if (val === 'frpc') {
+    newInstanceState.servers = newInstanceState.servers.length ? newInstanceState.servers : [{ name: 'default', serverAddr: '', serverPort: 7000, token: '' }];
+    newInstanceState.proxies = newInstanceState.proxies.length ? newInstanceState.proxies : [{ name: 'proxy1', type: 'tcp', local_ip: '127.0.0.1', local_port: 80, remote_port: 8080, custom_domains: [] }];
+  } else {
+    newInstanceState.servers = [];
+    newInstanceState.proxies = [];
+  }
+  renderConfigFields();
+}
+function onDeployChange(val) {
+  newInstanceState.deploy_mode = val;
+}
+
+function generateToken(btn) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let token = '';
+  for (let i = 0; i < 32; i++) token += chars[Math.floor(Math.random()*chars.length)];
+  btn.previousElementSibling.value = token;
+  toast('已生成 32 位随机 token', 'info');
+}
+
+// ============ 收集表单数据 → 提交 ============
+function collectFormData() {
+  const form = document.getElementById('newInstanceForm');
+  if (!form) return null;
+  const data = {
+    name: form.querySelector('[name=name]').value.trim(),
+    type: form.querySelector('[name=type]').value,
+    deploy_mode: form.querySelector('[name=deploy_mode]').value,
+    config: {},
+  };
+  if (data.type === 'frps') {
+    ['bind_addr','bind_port','auth_token','transport_heartbeat_interval','transport_heartbeat_ttl','allow_arbitrary_ports'].forEach(f => {
+      const el = form.querySelector(`[name=${f}]`);
+      if (el) data.config[f] = (el.type === 'checkbox') ? el.checked : el.value;
+    });
+    data.config.bind_port = parseInt(data.config.bind_port);
+    data.config.transport_heartbeat_interval = parseInt(data.config.transport_heartbeat_interval);
+    data.config.transport_heartbeat_ttl = parseInt(data.config.transport_heartbeat_ttl);
+  } else {
+    // 直接从 DOM 收集 servers 和 proxies
+    const servers = [];
+    document.querySelectorAll('[id^="server-"]').forEach(el => {
+      const f = {};
+      el.querySelectorAll('[data-field]').forEach(inp => {
+        f[inp.dataset.field] = inp.value;
+      });
+      f.serverPort = parseInt(f.serverPort) || 7000;
+      servers.push(f);
+    });
+    const proxies = [];
+    document.querySelectorAll('[id^="proxy-"]').forEach(el => {
+      const f = {};
+      el.querySelectorAll('[data-field]').forEach(inp => {
+        f[inp.dataset.field] = inp.value;
+      });
+      f.local_port = parseInt(f.local_port) || 0;
+      f.remote_port = parseInt(f.remote_port) || undefined;
+      if (f.custom_domains) f.custom_domains = f.custom_domains.split(',').map(s=>s.trim()).filter(Boolean);
+      else f.custom_domains = [];
+      proxies.push(f);
+    });
+    data.config.servers = servers;
+    data.config.proxies = proxies;
+  }
+  return data;
+}
+
+async function submitNewInstance(e) {
+  e.preventDefault();
+  const data = collectFormData();
+  if (!data) return;
+  if (!data.name) { toast('请输入实例名', 'error'); return; }
+  try {
+    const result = await api('/api/instances', { method: 'POST', body: JSON.stringify(data) });
+    toast('实例创建成功', 'success');
+    closeModal();
+    await loadDashboard();
+    nav('instances');
+    if (result.container && !result.container.success) {
+      toast(`容器创建失败: ${result.container.error||''}`, 'error');
+    }
+  } catch (e) {
+    toast(`创建失败: ${e.message}`, 'error');
+  }
+}
+
+// ============ 实例详情页 ============
+let detailInstance = null;
+
+async function showDetail(id) {
+  try {
+    detailInstance = await api(`/api/instances/${id}`);
+    renderDetail();
+    nav('detail');
+    document.getElementById('nav-dashboard') && (document.getElementById('nav-dashboard').className = 'px-3 py-1.5 rounded tab-inactive');
+    document.getElementById('nav-instances') && (document.getElementById('nav-instances').className = 'px-3 py-1.5 rounded tab-inactive');
+  } catch (e) {
+    toast(`加载失败: ${e.message}`, 'error');
+  }
+}
+
+function renderDetail() {
+  if (!detailInstance) return;
+  const i = detailInstance;
+  const running = i.status?.running;
+  const cfg = i.config_content || '';
+
+  document.getElementById('view-detail').innerHTML = `
+    <div class="flex items-center gap-3 mb-4">
+      <button onclick="nav('instances');loadInstances()" class="btn-ghost">← 返回</button>
+      <h2 class="text-xl font-semibold">${escapeHtml(i.name)}</h2>
+      <span class="badge ${i.type==='frps'?'badge-blue':'badge-gray'}">${i.type}</span>
+      <span class="badge ${running?'badge-green':'badge-red'}">${running?'运行中':'已停止'}</span>
+      <span class="badge badge-gray">${escapeHtml(i.deploy_mode)}</span>
+      <div class="flex-1"></div>
+      <button onclick="restartInstance(${i.id})" class="btn-ghost">重启</button>
+      <button onclick="deleteInstance(${i.id})" class="btn-danger">删除</button>
+    </div>
+    <div class="grid grid-cols-2 gap-4 mb-4">
+      <div class="panel p-4">
+        <h3 class="font-medium mb-2">实例信息</h3>
+        <table class="text-sm">
+          <tr><td class="text-gray-500 w-28">ID</td><td>${i.id}</td></tr>
+          <tr><td class="text-gray-500">创建时间</td><td>${new Date(i.created_at*1000).toLocaleString()}</td></tr>
+          <tr><td class="text-gray-500">更新时间</td><td>${new Date(i.updated_at*1000).toLocaleString()}</td></tr>
+          <tr><td class="text-gray-500">配置文件</td><td><code>${escapeHtml(i.config_path)}</code></td></tr>
+          <tr><td class="text-gray-500">容器状态</td><td>${escapeHtml(i.status?.status||'-')}</td></tr>
+        </table>
+      </div>
+      <div class="panel p-4">
+        <h3 class="font-medium mb-2">操作</h3>
+        <div class="flex flex-wrap gap-2">
+          ${running ? '<button onclick="stopInstance('+i.id+')" class="btn-ghost text-yellow-400">停止</button>' : '<button onclick="startInstance('+i.id+')" class="btn-ghost text-green-400">启动</button>'}
+          <button onclick="restartInstance(${i.id})" class="btn-ghost">重启</button>
+          <button onclick="viewLogs(${i.id})" class="btn-ghost">查看日志</button>
+          <button onclick="editInstance(${i.id})" class="btn-ghost">编辑配置</button>
+          <button onclick="copyConfig()" class="btn-ghost">复制配置</button>
+        </div>
+      </div>
+    </div>
+    <div class="panel p-4 mb-4">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="font-medium">配置文件 (TOML)</h3>
+        <div class="flex gap-2">
+          <button onclick="editInstance(${i.id})" class="btn-ghost text-sm">编辑</button>
+          <button onclick="refreshDetail(${i.id})" class="btn-ghost text-sm">刷新</button>
+        </div>
+      </div>
+      <pre id="config-content" class="bg-gray-950 p-3 rounded text-sm overflow-x-auto max-h-96 overflow-y-auto">${escapeHtml(cfg)}</pre>
+    </div>
+  `;
+}
+
+async function refreshDetail(id) { await showDetail(id); }
+
+async function editInstance(id) {
+  try {
+    const inst = await api(`/api/instances/${id}`);
+    newInstanceState = { type: inst.type, deploy_mode: inst.deploy_mode, servers: [], proxies: [] };
+    const cfg = inst.config_content;
+    // 简单解析:从配置文本中提取基本字段(实际应做 TOML 解析)
+    // 这里用占位提示
+    showEditInstanceModal(inst);
+  } catch (e) {
+    toast(`加载失败: ${e.message}`, 'error');
+  }
+}
+
+function showEditInstanceModal(inst) {
+  document.getElementById('modal-container').innerHTML = `
+    <div class="bg-gray-900 border border-gray-700 rounded-lg max-w-3xl w-[90%] max-h-[85vh] overflow-y-auto p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold">编辑实例: ${escapeHtml(inst.name)}</h3>
+        <button onclick="closeModal()" class="text-gray-400 hover:text-white text-xl">&times;</button>
+      </div>
+      <p class="text-sm text-gray-400 mb-4">直接编辑 TOML 配置,提交后实例会自动重启。</p>
+      <textarea id="edit-config" class="input font-mono text-sm h-96 w-full">${escapeHtml(inst.config_content||'')}</textarea>
+      <div class="flex gap-2 justify-end pt-4 border-t border-gray-700">
+        <button type="button" onclick="closeModal()" class="btn-ghost">取消</button>
+        <button type="button" onclick="saveInstanceConfig(${inst.id})" class="btn-primary">保存并重启</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('modal-container').classList.remove('hidden');
+  document.getElementById('modal-container').classList.add('flex');
+}
+
+async function saveInstanceConfig(id) {
+  try {
+    const config = document.getElementById('edit-config').value;
+    // 用 PUT 接口,直接传原始 toml
+    const resp = await fetch(`/api/instances/${id}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ raw_config: config, restart: true }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || '保存失败');
+    toast('配置已保存,实例重启中...', 'success');
+    closeModal();
+    setTimeout(() => refreshDetail(id), 1500);
+  } catch (e) {
+    toast(`保存失败: ${e.message}`, 'error');
+  }
+}
+
+function copyConfig() {
+  const cfg = document.getElementById('config-content')?.textContent || '';
+  navigator.clipboard.writeText(cfg).then(() => toast('配置已复制到剪贴板', 'success'));
+}
+
+function viewLogs(id) {
+  showLogsModal(id);
+}
+
+function showLogsModal(id) {
+  document.getElementById('modal-container').innerHTML = `
+    <div class="bg-gray-900 border border-gray-700 rounded-lg w-[90%] max-w-5xl h-[80vh] flex flex-col">
+      <div class="flex items-center justify-between p-4 border-b border-gray-700">
+        <h3 class="font-semibold">实时日志</h3>
+        <div class="flex gap-2">
+          <button onclick="toggleLogStream()" id="stream-btn" class="btn-ghost text-sm">⏸ 暂停</button>
+          <button onclick="closeModal()" class="btn-ghost text-sm">关闭</button>
+        </div>
+      </div>
+      <div id="log-output" class="flex-1 overflow-y-auto p-4 bg-black font-mono text-xs text-green-400 whitespace-pre"></div>
+    </div>
+  `;
+  document.getElementById('modal-container').classList.remove('hidden');
+  document.getElementById('modal-container').classList.add('flex');
+  startLogStream(id);
+}
+
+async function startLogStream(id) {
+  if (logStream) logStream.close();
+  const lines = await api(`/api/instances/${id}/logs?lines=100`).then(d => d.logs).catch(() => '');
+  document.getElementById('log-output').textContent = lines;
+  // SSE 实时流
+  const evtSource = new EventSource(`/api/instances/${id}/logs?stream=1`);
+  evtSource.onmessage = (e) => {
+    const el = document.getElementById('log-output');
+    el.textContent += e.data;
+    el.scrollTop = el.scrollHeight;
+  };
+  evtSource.onerror = () => {
+    evtSource.close();
+  };
+  logStream = evtSource;
+}
+
+function toggleLogStream() {
+  const btn = document.getElementById('stream-btn');
+  if (logStream) {
+    logStream.close();
+    logStream = null;
+    btn.textContent = '▶ 继续';
+  } else {
+    const id = detailInstance?.id;
+    if (id) startLogStream(id);
+    btn.textContent = '⏸ 暂停';
+  }
+}
+
+// ============ 实例操作 ============
+async function startInstance(id) {
+  try { await api(`/api/instances/${id}/start`, { method: 'POST' }); toast('启动成功', 'success'); loadInstances(); }
+  catch (e) { toast(`启动失败: ${e.message}`, 'error'); }
+}
+async function stopInstance(id) {
+  try { await api(`/api/instances/${id}/stop`, { method: 'POST' }); toast('停止成功', 'success'); loadInstances(); }
+  catch (e) { toast(`停止失败: ${e.message}`, 'error'); }
+}
+async function restartInstance(id) {
+  try { await api(`/api/instances/${id}/restart`, { method: 'POST' }); toast('重启成功', 'success'); setTimeout(loadInstances, 1000); }
+  catch (e) { toast(`重启失败: ${e.message}`, 'error'); }
+}
+async function deleteInstance(id) {
+  if (!confirm('确定删除此实例?容器和配置都会删除,不可恢复!')) return;
+  try { await api(`/api/instances/${id}`, { method: 'DELETE' }); toast('已删除', 'success'); loadInstances(); }
+  catch (e) { toast(`删除失败: ${e.message}`, 'error'); }
+}
+
+function closeModal() {
+  if (logStream) { logStream.close(); logStream = null; }
+  document.getElementById('modal-container').classList.add('hidden');
+  document.getElementById('modal-container').classList.remove('flex');
+}
+
+// ============ 启动 ============
+async function init() {
+  await loadDashboard();
+  lucide.createIcons();
+}
+init();
+</script>
+</body>
+</html>
