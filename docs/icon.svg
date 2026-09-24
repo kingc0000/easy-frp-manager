@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1e3a8a"/>
+      <stop offset="100%" stop-color="#0b0f1a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#60a5fa"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#34d399"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6"/>
+      <feOffset dx="0" dy="4" result="offsetblur"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.3"/></feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- 背景圆角方形 -->
+  <rect x="0" y="0" width="512" height="512" rx="96" ry="96" fill="url(#bg)"/>
+  
+  <!-- 装饰:右上角光晕 -->
+  <circle cx="420" cy="90" r="180" fill="#3b82f6" opacity="0.08"/>
+  
+  <!-- 中央 frp 网络符号 -->
+  <g transform="translate(256,220)" filter="url(#shadow)">
+    <!-- 外圆环(客户端节点) -->
+    <circle cx="-120" cy="0" r="48" fill="url(#accent)" stroke="#1e3a8a" stroke-width="6"/>
+    <!-- 外圆环(服务端节点) -->
+    <circle cx="120" cy="0" r="48" fill="url(#green)" stroke="#065f46" stroke-width="6"/>
+    <!-- 中间连线 -->
+    <line x1="-72" y1="0" x2="72" y2="0" stroke="#e5e7eb" stroke-width="8" stroke-linecap="round" stroke-dasharray="4 16"/>
+    <!-- 中间箭头 -->
+    <polygon points="40,-18 70,0 40,18" fill="#e5e7eb"/>
+    <!-- 左侧节点文字 frpc -->
+    <text x="-120" y="8" text-anchor="middle" font-family="Arial Black, sans-serif" font-size="28" font-weight="900" fill="white">frpc</text>
+    <!-- 右侧节点文字 frps -->
+    <text x="120" y="8" text-anchor="middle" font-family="Arial Black, sans-serif" font-size="28" font-weight="900" fill="white">frps</text>
+  </g>
+  
+  <!-- 底部 FRP Manager 文字 -->
+  <text x="256" y="410" text-anchor="middle" font-family="Arial Black, sans-serif" font-size="42" font-weight="900" fill="white">FRP</text>
+  <text x="256" y="450" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" font-weight="600" fill="#93c5fd" letter-spacing="6">MANAGER</text>
+  
+  <!-- 版本号 -->
+  <text x="256" y="488" text-anchor="middle" font-family="Arial, monospace" font-size="16" fill="#6b7280">v1.1.0</text>
+</svg>
