@@ -16,6 +16,44 @@ from dataclasses import dataclass
 from typing import Optional
 
 
+# === 内置 frp 二进制解析 ===
+# frp 二进制已打包在项目 bin/ 目录(amd64 + arm64),无需用户单独安装。
+# 优先用内置二进制;找不到再回退到系统 PATH / /usr/local/bin。
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BIN_DIR = os.path.join(SCRIPT_DIR, "bin")
+
+
+def builtin_binary(frp_type: str) -> Optional[str]:
+    """返回内置 frp 二进制路径(自动按架构选 amd64/arm64)。
+
+    frp_type: "frpc" 或 "frps"。找不到返回 None。
+    """
+    if not os.path.isdir(BIN_DIR):
+        return None
+    machine = os.uname().machine
+    is_arm = machine in ("aarch64", "arm64")
+    # 命名约定: amd64 -> frpc, arm64 -> frpc-arm64
+    candidates = [
+        os.path.join(BIN_DIR, f"{frp_type}-arm64" if is_arm else frp_type),
+        os.path.join(BIN_DIR, frp_type),
+        os.path.join(BIN_DIR, f"{frp_type}-arm64"),
+    ]
+    for p in candidates:
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return None
+
+
+def resolve_binary(frp_type: str) -> Optional[str]:
+    """解析 frp 可执行路径:内置 bin/ > 系统 PATH > /usr/local/bin。"""
+    return (
+        builtin_binary(frp_type)
+        or shutil.which(frp_type)
+        or (shutil.which(f"/usr/local/bin/{frp_type}")
+            if os.path.exists(f"/usr/local/bin/{frp_type}") else None)
+    )
+
+
 @dataclass
 class FrpStatus:
     """frp 状态探测结果。"""
@@ -94,9 +132,9 @@ def detect_frp() -> FrpStatus:
         except Exception:
             pass
 
-    # 探测本机 binary
-    frps_bin = shutil.which("frps") or shutil.which("/usr/local/bin/frps")
-    frpc_bin = shutil.which("frpc") or shutil.which("/usr/local/bin/frpc")
+    # 探测 frp 二进制(优先内置 bin/ > 系统 PATH > /usr/local/bin)
+    frps_bin = resolve_binary("frps")
+    frpc_bin = resolve_binary("frpc")
     if frps_bin and not status.frps_installed:
         status.frps_installed = True
         status.frps_version = _get_binary_version(frps_bin)
@@ -110,11 +148,11 @@ def detect_frp() -> FrpStatus:
     if not status.frps_installed and _systemd_service_active("frps"):
         status.frps_installed = True
         status.frps_location = "systemd:frps"
-        status.frps_version = _get_binary_version("/usr/local/bin/frps") or "?"
+        status.frps_version = _get_binary_version(resolve_binary("frps")) or "?"
     if not status.frpc_installed and _systemd_service_active("frpc"):
         status.frpc_installed = True
         status.frpc_location = "systemd:frpc"
-        status.frpc_version = _get_binary_version("/usr/local/bin/frpc") or "?"
+        status.frpc_version = _get_binary_version(resolve_binary("frpc")) or "?"
 
     # 决定主模式
     if status.docker_available:
@@ -334,9 +372,9 @@ def create_binary_instance(instance_name: str,
     """用 systemd 部署一个 frp 实例(binary 模式)。"""
     result = {"success": False}
     if not bin_path:
-        bin_path = f"/usr/local/bin/{instance_type}"
-    if not os.path.exists(bin_path):
-        return {"success": False, "error": f"frp 二进制不存在: {bin_path}"}
+        bin_path = resolve_binary(instance_type)
+    if not bin_path:
+        return {"success": False, "error": f"未找到 frp 二进制: {instance_type}"}
 
     try:
         # 检查是否已有同名 service

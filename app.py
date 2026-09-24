@@ -166,11 +166,11 @@ def api_create_instance(ctx):
     if db.get_instance_by_name(name):
         return 409, {"error": f"实例名重复: {name}"}
 
-    # 前置校验:binary 模式需要 frp 二进制已安装
+    # 前置校验:binary 模式需要 frp 二进制可用(内置 bin/ 已自带,无需单独安装)
     if deploy_mode == "binary":
-        bin_path = f"/usr/local/bin/{instance_type}"
-        if not os.path.exists(bin_path):
-            return 400, {"error": f"frp 二进制未安装({bin_path}),请先点击'安装 frp'"}
+        bin_path = frp_ops.resolve_binary(instance_type)
+        if not bin_path:
+            return 400, {"error": f"未找到 frp 二进制({instance_type}),请检查 bin/ 目录"}
 
     # 生成配置文件
     config_path = str(CONFIG_DIR / f"{name}.toml")
@@ -208,7 +208,7 @@ def api_create_instance(ctx):
             instance_name=name,
             instance_type=instance_type,
             config_path=config_path,
-            bin_path=f"/usr/local/bin/{instance_type}",
+            bin_path=frp_ops.resolve_binary(instance_type),
         )
         result["service"] = binary_result
         if not binary_result.get("success"):

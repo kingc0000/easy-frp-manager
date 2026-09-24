@@ -81,18 +81,15 @@
       <div class="flex items-center gap-4">
         <div id="user-info" class="hidden"></div>
         <nav class="flex gap-1 text-sm">
-          <button onclick="nav('dashboard')" id="nav-dashboard" class="px-3 py-1.5 rounded tab-active">总览</button>
-          <button onclick="nav('instances')" id="nav-instances" class="px-3 py-1.5 rounded tab-inactive">实例管理</button>
+          <button onclick="nav('instances')" id="nav-instances" class="px-3 py-1.5 rounded tab-active">实例管理</button>
         </nav>
       </div>
     </div>
   </header>
 
   <main class="p-6 max-w-7xl mx-auto">
-    <!-- 总览页 -->
-    <div id="view-dashboard"></div>
     <!-- 实例管理页 -->
-    <div id="view-instances" class="hidden"></div>
+    <div id="view-instances"></div>
     <!-- 实例详情页 -->
     <div id="view-detail" class="hidden"></div>
   </main>
@@ -214,11 +211,12 @@ window.addEventListener('DOMContentLoaded', async () => {
   // 先清空任何残留的错误消息
   const loginErr = document.getElementById('login-error');
   if (loginErr) loginErr.classList.add('hidden');
-  
+
   await checkAuth();
   if (authToken) {
     renderUserInfo();
-    loadDashboard();
+    await loadDashboard();   // 加载系统/frp 状态(实例列表顶部信息条要用)
+    nav('instances');        // 进面板默认直接看实例列表
   }
 });
 
@@ -351,27 +349,35 @@ function timeAgo(ts) {
 function nav(view) {
   currentView = view;
   ['dashboard','instances','detail'].forEach(v => {
-    document.getElementById(`view-${v}`).classList.add('hidden');
+    const el = document.getElementById(`view-${v}`);
+    if (el) el.classList.add('hidden');
   });
-  document.getElementById(`view-${view}`).classList.remove('hidden');
+  const target = document.getElementById(`view-${view}`);
+  if (target) target.classList.remove('hidden');
   ['dashboard','instances'].forEach(v => {
     const el = document.getElementById(`nav-${v}`);
-    if (v === view) el.className = 'px-3 py-1.5 rounded tab-active';
-    else el.className = 'px-3 py-1.5 rounded tab-inactive';
+    if (!el) return;
+    el.className = (v === view)
+      ? 'px-3 py-1.5 rounded tab-active'
+      : 'px-3 py-1.5 rounded tab-inactive';
   });
-  if (view === 'dashboard') loadDashboard();
   if (view === 'instances') loadInstances();
   if (logStream) { logStream.close(); logStream = null; }
 }
 
-// ============ 总览页 ============
+// ============ 系统/frp 状态(供实例列表顶部状态条使用) ============
 async function loadDashboard() {
   try {
     dashboardData = await api('/api/dashboard');
-    renderDashboard();
   } catch (e) {
-    document.getElementById('view-dashboard').innerHTML = `<div class="text-red-400">加载失败: ${e.message}</div>`;
+    dashboardData = null;
+    console.warn('加载系统状态失败:', e.message);
   }
+}
+
+async function refreshAll() {
+  await loadDashboard();
+  await loadInstances();
 }
 
 function renderDashboard() {
@@ -480,7 +486,7 @@ function renderDashboard() {
   document.getElementById('host-info').textContent = `@ ${system.hostname}`;
 }
 
-async function refreshDashboard() { loadDashboard(); }
+async function refreshDashboard() { await loadDashboard(); }
 
 // ============ 实例列表 ============
 async function loadInstances() {
@@ -494,30 +500,72 @@ async function loadInstances() {
 
 function renderInstances() {
   const frpInfo = dashboardData?.frp || {};
+  const sys = dashboardData?.system || {};
+  const mem = sys.memory || {};
+  const disk = sys.disk || {};
+  const load = (sys.load_avg || []).map(x => (+x).toFixed(2)).join(' / ');
+  const memPct = Math.round((mem.percent || 0) * 100) / 100;
+
+  // 顶部状态条:整合原总览页的系统/frp 信息
+  const statusBar = `
+    <div class="panel p-4 mb-4 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+      <div>
+        <p class="text-xs text-gray-500 mb-1">主机</p>
+        <p class="font-mono">${escapeHtml(sys.hostname || '-')}</p>
+        <p class="text-xs text-gray-500 mt-1">运行 ${formatUptime(sys.uptime_seconds)} · ${sys.cpu_count || '-'} 核</p>
+      </div>
+      <div>
+        <p class="text-xs text-gray-500 mb-1">CPU 负载</p>
+        <p>${load || '-'}</p>
+        <p class="text-xs text-gray-500 mt-1">Docker ${frpInfo.docker_available ? '✓ v' + escapeHtml(frpInfo.docker_version) : '✗ 不可用'}</p>
+      </div>
+      <div>
+        <p class="text-xs text-gray-500 mb-1">内存</p>
+        <div class="w-full bg-gray-800 h-2 rounded overflow-hidden mb-1">
+          <div class="bg-blue-500 h-full" style="width:${memPct}%"></div>
+        </div>
+        <p class="text-xs text-gray-500">${formatBytes(mem.used)} / ${formatBytes(mem.total)}</p>
+      </div>
+      <div>
+        <p class="text-xs text-gray-500 mb-1">磁盘</p>
+        <div class="w-full bg-gray-800 h-2 rounded overflow-hidden mb-1">
+          <div class="bg-green-500 h-full" style="width:${disk.percent||0}%"></div>
+        </div>
+        <p class="text-xs text-gray-500">${formatBytes(disk.used)} / ${formatBytes(disk.total)}</p>
+      </div>
+      <div>
+        <p class="text-xs text-gray-500 mb-1">frps 服务端</p>
+        <p>${frpInfo.frps_installed ? '<span class="badge badge-green">已安装</span>' : '<span class="badge badge-gray">未安装</span>'} <code class="text-xs">${escapeHtml(frpInfo.frps_version||'-')}</code></p>
+      </div>
+      <div>
+        <p class="text-xs text-gray-500 mb-1">frpc 客户端</p>
+        <p>${frpInfo.frpc_installed ? '<span class="badge badge-green">已安装</span>' : '<span class="badge badge-gray">未安装</span>'} <code class="text-xs">${escapeHtml(frpInfo.frpc_version||'-')}</code></p>
+      </div>
+    </div>
+  `;
+
   let html = `
-    <h2 class="text-xl font-semibold mb-4">实例管理</h2>
+    ${statusBar}
     <div class="panel p-4 mb-4 flex items-center justify-between flex-wrap gap-2">
       <div class="text-sm text-gray-400">
         已安装实例: <span class="text-white font-medium">${instancesCache.length}</span>
-        ${frpInfo.mode ? `<span class="ml-3 text-gray-500">部署模式: <code>${escapeHtml(frpInfo.mode)}</code></span>` : ''}
       </div>
       <div class="flex gap-2">
         <button onclick="showNewInstanceModal()" class="btn-primary text-sm">+ 新建实例</button>
-        <button onclick="refreshDashboard();nav('dashboard')" class="btn-ghost text-sm">查看总览</button>
+        <button onclick="refreshAll()" class="btn-ghost text-sm">刷新</button>
       </div>
     </div>
     <div class="panel p-4">
       <table>
         <thead><tr>
-          <th>名称</th><th>类型</th><th>部署模式</th><th>状态</th><th>配置</th><th>更新</th><th>操作</th>
+          <th>名称</th><th>类型</th><th>状态</th><th>配置</th><th>更新</th><th>操作</th>
         </tr></thead>
         <tbody>
-          ${instancesCache.length === 0 ? `<tr><td colspan="7" class="text-center text-gray-500 py-8">暂无实例,点击"新建实例"开始</td></tr>` :
+          ${instancesCache.length === 0 ? `<tr><td colspan="6" class="text-center text-gray-500 py-8">暂无实例,点击"新建实例"开始</td></tr>` :
             instancesCache.map(i => `
             <tr>
               <td class="font-medium">${escapeHtml(i.name)}</td>
               <td><span class="badge ${i.type==='frps'?'badge-blue':'badge-gray'}">${i.type}</span></td>
-              <td><code>${escapeHtml(i.deploy_mode)}</code></td>
               <td><span class="badge ${i.status?.running?'badge-green':'badge-red'}">${i.status?.running?'运行中':(i.status?.status||'未启动')}</span></td>
               <td>${i.config_exists ? '<span class="text-green-400">✓</span>' : '<span class="text-red-400">✗</span>'}</td>
               <td>${timeAgo(i.updated_at)}</td>
@@ -535,17 +583,17 @@ function renderInstances() {
     </div>
   `;
   document.getElementById('view-instances').innerHTML = html;
+  const hi = document.getElementById('host-info');
+  if (hi) hi.textContent = `@ ${sys.hostname || ''}`.trim();
 }
 
 // ============ 新建实例模态框 ============
-let newInstanceState = { type: 'frpc', deploy_mode: 'docker', servers: [], proxies: [] };
+let newInstanceState = { type: 'frpc', deploy_mode: 'binary', servers: [], proxies: [] };
 
 function showNewInstanceModal() {
-  const frpInfo = dashboardData?.frp || {};
-  const dockerOk = frpInfo.docker_available;
   newInstanceState = {
     type: 'frpc',
-    deploy_mode: dockerOk ? 'docker' : 'binary',
+    deploy_mode: 'binary',
     servers: [{ name: 'default', serverAddr: '', serverPort: 2005, token: '' }],
     proxies: [{ name: 'nas-web', type: 'tcp', local_ip: '127.0.0.1', local_port: 8080, remote_port: 2008, custom_domains: [] }]
   };
@@ -553,9 +601,7 @@ function showNewInstanceModal() {
 }
 
 function renderNewInstanceModal() {
-  const { type, deploy_mode } = newInstanceState;
-  const frpInfo = dashboardData?.frp || {};
-  const dockerOk = frpInfo.docker_available;
+  const { type } = newInstanceState;
 
   document.getElementById('modal-container').innerHTML = `
     <div class="bg-gray-900 border border-gray-700 rounded-lg max-w-3xl w-[90%] max-h-[85vh] overflow-y-auto p-6">
@@ -578,15 +624,6 @@ function renderNewInstanceModal() {
               <option value="frps" ${type==='frps'?'selected':''}>frps (服务端)</option>
             </select>
           </div>
-        </div>
-
-        <div>
-          <label class="block text-sm text-gray-400 mb-1">部署模式 <span class="text-red-400">*</span></label>
-          <select name="deploy_mode" class="input" onchange="onDeployChange(this.value)">
-            <option value="docker" ${deploy_mode==='docker'?'selected':''} ${!dockerOk?'disabled':''}>Docker 容器 (推荐)</option>
-            <option value="binary" ${deploy_mode==='binary'?'selected':''}>系统二进制 + systemd</option>
-          </select>
-          ${!dockerOk ? '<p class="text-xs text-yellow-400 mt-1">⚠ 当前 Docker 不可用,请使用二进制模式</p>' : ''}
         </div>
 
         <div id="config-fields" class="space-y-4"></div>
@@ -842,7 +879,7 @@ function collectFormData() {
   const data = {
     name: form.querySelector('[name=name]').value.trim(),
     type: form.querySelector('[name=type]').value,
-    deploy_mode: form.querySelector('[name=deploy_mode]').value,
+    deploy_mode: 'binary',
     config: {},
   };
   if (data.type === 'frps') {
@@ -909,8 +946,6 @@ async function showDetail(id) {
     detailInstance = await api(`/api/instances/${id}`);
     renderDetail();
     nav('detail');
-    document.getElementById('nav-dashboard') && (document.getElementById('nav-dashboard').className = 'px-3 py-1.5 rounded tab-inactive');
-    document.getElementById('nav-instances') && (document.getElementById('nav-instances').className = 'px-3 py-1.5 rounded tab-inactive');
   } catch (e) {
     toast(`加载失败: ${e.message}`, 'error');
   }
