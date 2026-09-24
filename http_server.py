@@ -6,6 +6,7 @@
 - 静态文件服务
 - 路由参数 (/api/instances/<id>)
 - SSE 流式响应
+- 认证中间件(可选)
 """
 
 import json
@@ -18,12 +19,32 @@ from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 
+# 不需要认证的路径(登录接口 + 静态资源)
+PUBLIC_PATHS = {"/api/auth/login", "/api/auth/check", "/api/auth/config"}
+STATIC_EXTENSIONS = {".html", ".css", ".js", ".ico", ".png", ".jpg", ".svg", ".woff", ".woff2", ".ttf"}
+
+
+def is_public_path(path: str) -> bool:
+    """判断路径是否公开(无需认证)。"""
+    if path in PUBLIC_PATHS:
+        return True
+    # 静态文件
+    ext = os.path.splitext(path)[1].lower()
+    if ext in STATIC_EXTENSIONS:
+        return True
+    if path == "/" or path.endswith("/index.html"):
+        return True
+    return False
+
+
 class Router:
     """简单 HTTP 路由分发器。"""
 
     def __init__(self):
         self.routes = {}  # (method, pattern) -> handler
         self.static_dir = None
+        self.auth_check = None  # 认证检查函数: (token) -> session_dict | None
+
 
     def add_route(self, method, path, handler):
         """注册路由。path 用 :param 表示参数,如 /api/instances/:id"""
@@ -131,10 +152,43 @@ class FRPMRequestHandler(BaseHTTPRequestHandler):
         if method == "OPTIONS":
             self.send_response(204)
             self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Cookie")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+            self.send_header("Access-Control-Allow-Credentials", "true")
             self.end_headers()
             return
+
+        # === 认证检查(可被 auth.enabled 关闭)===
+        auth_check = getattr(self.router, "auth_check", None)
+        if auth_check and not is_public_path(path):
+            # 提取 token
+            headers = dict(self.headers)
+            auth_header = headers.get("Authorization") or headers.get("authorization") or ""
+            token = ""
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:].strip()
+            else:
+                cookie_header = headers.get("Cookie") or headers.get("cookie") or ""
+                for part in cookie_header.split(";"):
+                    part = part.strip()
+                    if part.startswith("session="):
+                        token = part[8:].strip()
+                        break
+            session = auth_check(token)
+            if not session:
+                # 未认证,返回 401 + 前端友好提示
+                body = json.dumps({
+                    "error": "未登录或会话已过期",
+                    "login_required": True,
+                }, ensure_ascii=False).encode("utf-8")
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Credentials", "true")
+                self.end_headers()
+                self.wfile.write(body)
+                return
 
         # 匹配路由
         handler, params = self.router.match(method, path)

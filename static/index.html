@@ -44,6 +44,31 @@
 </style>
 </head>
 <body class="min-h-screen">
+<!-- 登录遮罩层 -->
+<div id="login-overlay" class="fixed inset-0 z-50 bg-black flex items-center justify-center" style="display:none;">
+  <div class="panel p-8 w-96 shadow-2xl">
+    <div class="flex items-center gap-3 mb-6">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12l2 2 4-4"/></svg>
+      <div>
+        <h2 class="text-xl font-bold">FRP Manager</h2>
+        <p class="text-sm text-gray-500">登录后继续</p>
+      </div>
+    </div>
+    <div id="login-error" class="mb-4 p-3 rounded bg-red-900/30 border border-red-700 text-red-300 text-sm hidden"></div>
+    <form onsubmit="doLogin(event)">
+      <div class="mb-3">
+        <label class="block text-sm text-gray-400 mb-1">用户名</label>
+        <input type="text" id="login-username" class="input" value="admin" required autofocus>
+      </div>
+      <div class="mb-4">
+        <label class="block text-sm text-gray-400 mb-1">密码</label>
+        <input type="password" id="login-password" class="input" placeholder="默认: admin123" required>
+      </div>
+      <button type="submit" class="btn-primary w-full py-2">登录</button>
+    </form>
+    <p class="text-xs text-gray-600 mt-4 text-center">默认账号: admin / admin123<br>登录后请记得修改密码</p>
+  </div>
+</div>
 <div id="app">
   <!-- 顶栏 -->
   <header class="border-b border-gray-800 bg-gray-900/50 sticky top-0 z-40 backdrop-blur">
@@ -76,16 +101,142 @@
 <div id="toast-container"></div>
 
 <script>
+// ============ 登录相关 ============
+function showLogin(message) {
+  authToken = '';
+  localStorage.removeItem('frpm_token');
+  localStorage.removeItem('frpm_username');
+  const overlay = document.getElementById('login-overlay');
+  if (overlay) {
+    overlay.style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
+  }
+  if (message) {
+    const err = document.getElementById('login-error');
+    if (err) {
+      err.textContent = message;
+      err.classList.remove('hidden');
+    }
+  }
+}
+
+function hideLogin() {
+  const overlay = document.getElementById('login-overlay');
+  if (overlay) overlay.style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+}
+
+async function doLogin(event) {
+  event.preventDefault();
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  errEl.classList.add('hidden');
+  const btn = event.target.querySelector('button');
+  btn.disabled = true;
+  btn.textContent = '登录中...';
+  try {
+    const resp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username, password}),
+    });
+    const data = await resp.json().catch(()=>({}));
+    if (!resp.ok) {
+      errEl.textContent = data.error || '登录失败';
+      errEl.classList.remove('hidden');
+      btn.disabled = false;
+      btn.textContent = '登录';
+      return;
+    }
+    authToken = data.token;
+    currentUsername = data.username;
+    localStorage.setItem('frpm_token', data.token);
+    localStorage.setItem('frpm_username', data.username);
+    hideLogin();
+    toast('登录成功,欢迎 ' + data.username, 'success');
+    // 重新加载数据
+    loadDashboard();
+  } catch(e) {
+    errEl.textContent = e.message || '网络错误';
+    errEl.classList.remove('hidden');
+    btn.disabled = false;
+    btn.textContent = '登录';
+  }
+}
+
+async function doLogout() {
+  if (!confirm('确定要退出登录吗?')) return;
+  try {
+    await fetch('/api/auth/logout', {method: 'POST', headers: {'Content-Type':'application/json'}}).catch(()=>{});
+  } catch(e) {}
+  showLogin('已退出登录');
+}
+
+// 页面加载时检查登录状态
+async function checkAuth() {
+  if (!authToken) { showLogin(); return; }
+  try {
+    const resp = await fetch('/api/auth/check', {headers: {'Authorization':'Bearer '+authToken}});
+    const data = await resp.json();
+    if (!data.authenticated) {
+      showLogin();
+      return;
+    }
+    currentUsername = data.username || currentUsername;
+    localStorage.setItem('frpm_username', currentUsername);
+    hideLogin();
+  } catch(e) {
+    showLogin();
+  }
+}
+
+// 在顶栏显示用户名和退出按钮
+function renderUserInfo() {
+  if (!currentUsername) return;
+  const hostEl = document.getElementById('user-info');
+  if (!hostEl) return;
+  hostEl.innerHTML = '<div class="flex items-center gap-3 text-sm">'
+    + '<span class="text-gray-400">用户: <span class="text-gray-200">'+escapeHtml(currentUsername)+'</span></span>'
+    + '<button onclick="doLogout()" class="btn-ghost text-xs px-2 py-1">退出登录</button>'
+    + '</div>';
+}
+
+// 页面加载入口
+window.addEventListener('DOMContentLoaded', async () => {
+  await checkAuth();
+  if (authToken) {
+    renderUserInfo();
+    loadDashboard();
+  }
+});
+
 // ============ 全局状态 ============
 let currentView = 'dashboard';
 let dashboardData = null;
 let instancesCache = [];
 let logStream = null;
+let authToken = localStorage.getItem('frpm_token') || '';
+let currentUsername = localStorage.getItem('frpm_username') || '';
 
 // ============ 工具函数 ============
 async function api(url, options={}) {
-  const opts = { headers: {'Content-Type': 'application/json'}, ...options };
+  const headers = { 'Content-Type': 'application/json' };
+  // 自动附加认证 token
+  if (authToken) {
+    headers['Authorization'] = 'Bearer ' + authToken;
+  }
+  const opts = { ...options, headers: { ...headers, ...(options.headers || {}) } };
   const resp = await fetch(url, opts);
+  // 处理 401:未登录或会话过期,跳转到登录
+  if (resp.status === 401) {
+    const err = await resp.json().catch(() => ({}));
+    if (err.login_required) {
+      showLogin(err.error || '会话已过期,请重新登录');
+      throw new Error(err.error || '请重新登录');
+    }
+    throw new Error(err.error || `HTTP ${resp.status}`);
+  }
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
   return data;

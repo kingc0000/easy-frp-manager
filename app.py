@@ -12,12 +12,17 @@ import os
 import time
 from pathlib import Path
 
+import auth
 import config_gen
 import db
 import frp_ops
 from http_server import App
 
 app = App(static_folder="static")
+
+# === 启用认证:把所有非公开路径的 API 都受保护 ===
+# 认证检查函数:传入 token,返回 session dict 或 None
+app.router.auth_check = auth.get_session
 
 # === 配置目录 ===
 CONFIG_DIR = Path(os.environ.get("FRPM_CONFIG_DIR", "/data/frpm-configs"))
@@ -373,6 +378,108 @@ def api_install_versions(ctx):
     return 200, {
         "versions": frp_ops.FRP_VERSIONS,
         "default": frp_ops.DEFAULT_VERSION,
+    }
+
+
+# ============ 认证 API ============
+
+@app.get("/api/auth/config")
+def api_auth_config(ctx):
+    """获取认证配置信息(公开,不需要登录)。"""
+    return 200, {
+        "enabled": True,
+        "has_users": True,
+        "default_username": auth.DEFAULT_USERNAME,
+    }
+
+
+@app.get("/api/auth/check")
+def api_auth_check(ctx):
+    """检查当前会话状态(公开,前端用来判断是否已登录)。"""
+    # 从请求里提取 token
+    headers = ctx.get("headers", {})
+    auth_header = headers.get("Authorization") or headers.get("authorization") or ""
+    token = ""
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+    else:
+        cookie_header = headers.get("Cookie") or headers.get("cookie") or ""
+        for part in cookie_header.split(";"):
+            part = part.strip()
+            if part.startswith("session="):
+                token = part[8:].strip()
+                break
+    session = auth.get_session(token)
+    if session:
+        return 200, {
+            "authenticated": True,
+            "username": session.get("username"),
+            "expires_in": session.get("expire_at", 0) - int(time.time()),
+        }
+    return 200, {"authenticated": False}
+
+
+@app.post("/api/auth/login")
+def api_auth_login(ctx):
+    """登录接口(公开)。"""
+    body = ctx.get("body") or {}
+    username = (body.get("username") or "").strip()
+    password = body.get("password") or ""
+    if not username or not password:
+        return 400, {"error": "用户名和密码不能为空"}
+    try:
+        result = auth.login(username, password)
+    except ValueError as e:
+        return 401, {"error": str(e)}
+    # 返回 token,前端会存到 localStorage 或 cookie
+    return 200, {
+        "token": result["token"],
+        "username": result["username"],
+        "expires_in": result["expires_in"],
+    }
+
+
+@app.post("/api/auth/logout")
+def api_auth_logout(ctx):
+    """登出(需要登录)。"""
+    token = ctx.get("token")
+    if token:
+        auth.delete_session(token)
+    return 200, {"message": "已登出"}
+
+
+@app.post("/api/auth/change-password")
+def api_auth_change_password(ctx):
+    """修改密码(需要登录)。"""
+    body = ctx.get("body") or {}
+    old_password = body.get("old_password") or ""
+    new_password = body.get("new_password") or ""
+    confirm_password = body.get("confirm_password") or ""
+    username = ctx.get("session", {}).get("username", "")
+
+    if not old_password or not new_password:
+        return 400, {"error": "旧密码和新密码不能为空"}
+    if len(new_password) < 6:
+        return 400, {"error": "新密码长度至少 6 位"}
+    if new_password != confirm_password:
+        return 400, {"error": "两次输入的新密码不一致"}
+    if not username:
+        return 401, {"error": "未登录"}
+
+    try:
+        result = auth.change_password(old_password, new_password, username)
+    except ValueError as e:
+        return 400, {"error": str(e)}
+    return 200, result
+
+
+@app.get("/api/auth/me")
+def api_auth_me(ctx):
+    """获取当前用户信息(需要登录)。"""
+    session = ctx.get("session", {})
+    return 200, {
+        "username": session.get("username"),
+        "expires_in": session.get("expire_at", 0) - int(time.time()),
     }
 
 
