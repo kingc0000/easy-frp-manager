@@ -40,10 +40,13 @@ def _load_auth_config() -> dict:
     """加载凭证配置,不存在则用默认值初始化。"""
     if not AUTH_CONFIG.exists():
         # 首次启动,创建默认凭证
+        # 先生成盐,再用这个盐 hash 密码,确保对应
+        salt = os.urandom(16).hex()
+        password_hash = hash_password(DEFAULT_PASSWORD, salt)
         cfg = {
             "username": DEFAULT_USERNAME,
-            "password_hash": hash_password(DEFAULT_PASSWORD),
-            "salt": os.urandom(16).hex(),
+            "password_hash": password_hash,
+            "salt": salt,
             "created_at": int(time.time()),
         }
         _save_auth_config(cfg)
@@ -55,10 +58,11 @@ def _load_auth_config() -> dict:
             return json.load(f)
     except Exception as e:
         print(f"[!] 加载凭证文件失败: {e},使用默认凭证")
+        salt = os.urandom(16).hex()
         return {
             "username": DEFAULT_USERNAME,
-            "password_hash": hash_password(DEFAULT_PASSWORD),
-            "salt": os.urandom(16).hex(),
+            "password_hash": hash_password(DEFAULT_PASSWORD, salt),
+            "salt": salt,
         }
 
 
