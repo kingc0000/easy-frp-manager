@@ -79,9 +79,6 @@
       </div>
       <div class="flex items-center gap-4">
         <div id="user-info" class="hidden"></div>
-        <nav class="flex gap-1 text-sm">
-          <button onclick="nav('instances')" id="nav-instances" class="px-3 py-1.5 rounded tab-active">实例管理</button>
-        </nav>
       </div>
     </div>
   </header>
@@ -156,8 +153,13 @@ async function doLogin(event) {
     localStorage.setItem('frpm_username', data.username);
     hideLogin();
     toast('登录成功,欢迎 ' + data.username, 'success');
-    // 重新加载数据
-    loadDashboard();
+    renderUserInfo();
+    // 登录成功后立刻显示实例列表(不等 dashboard 慢请求)
+    nav('instances');
+    // 后台加载 dashboard 状态条数据，完成后刷新实例列表以显示主机信息
+    loadDashboard().then(() => {
+      if (currentView === 'instances') loadInstances();
+    });
   } catch(e) {
     errEl.textContent = e.message || '网络错误';
     errEl.classList.remove('hidden');
@@ -214,8 +216,13 @@ window.addEventListener('DOMContentLoaded', async () => {
   await checkAuth();
   if (authToken) {
     renderUserInfo();
-    await loadDashboard();   // 加载系统/frp 状态(实例列表顶部信息条要用)
-    nav('instances');        // 进面板默认直接看实例列表
+    // 先立即显示实例列表(避免等待 dashboard 时页面空白)
+    nav('instances');
+    // 后台加载 dashboard 状态条数据，完成后更新实例列表的状态条
+    loadDashboard().then(() => {
+      // 如果还在 instances 视图，刷新实例列表以显示最新状态条
+      if (currentView === 'instances') loadInstances();
+    });
   }
 });
 
@@ -425,14 +432,7 @@ function renderInstances() {
         </div>
         <p class="text-xs text-gray-500">${formatBytes(disk.used)} / ${formatBytes(disk.total)}</p>
       </div>
-      <div>
-        <p class="text-xs text-gray-500 mb-1">frps 服务端</p>
-        <p>${frpInfo.frps_installed ? '<span class="badge badge-green">已安装</span>' : '<span class="badge badge-gray">未安装</span>'} <code class="text-xs">${escapeHtml(frpInfo.frps_version||'-')}</code></p>
-      </div>
-      <div>
-        <p class="text-xs text-gray-500 mb-1">frpc 客户端</p>
-        <p>${frpInfo.frpc_installed ? '<span class="badge badge-green">已安装</span>' : '<span class="badge badge-gray">未安装</span>'} <code class="text-xs">${escapeHtml(frpInfo.frpc_version||'-')}</code></p>
-      </div>
+
     </div>
   `;
 
