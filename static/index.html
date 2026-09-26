@@ -907,31 +907,42 @@ function renderFrpsStatusPanel(id) {
     proxiesHtml = `<div class="text-center text-gray-500 py-6">无活跃代理(没有 frpc 连上来)</div>`;
   } else {
     const rows = proxies.map(p => {
-      const ip = p.ip || p.clientIP || p.host || '-';
-      const ver = p.version || p.clientVersion || '-';
-      const remote = p.remotePort || p.bindPort || p.subdomain || p.group || '-';
-      const local = p.localIP ? `${p.localIP}:${p.localPort}` : (p.group || '-');
-      const name = p.name || p.proxyName || p.id || '-';
+      const name = p.name || '-';
+      const ptype = p._type || '-';
+      const conf = p.conf || {};
+      const remote = conf.remotePort || conf.bindAddr || conf.subdomain || conf.group || '-';
+      const local = conf.localIP || '-';
+      const ver = p.clientVersion || '-';
+      const status = p.status === 'online' ? '<span class="badge badge-green">在线</span>' : '<span class="badge badge-red">离线</span>';
+      const conns = p.curConns || 0;
+      const tIn = fmtBytes(p.todayTrafficIn);
+      const tOut = fmtBytes(p.todayTrafficOut);
       return `<tr>
         <td class="font-medium">${escapeHtml(name)}</td>
-        <td><span class="badge badge-blue">${escapeHtml(p._type)}</span></td>
+        <td><span class="badge badge-blue">${escapeHtml(ptype)}</span></td>
         <td><code>${escapeHtml(remote)}</code></td>
         <td><code>${escapeHtml(local)}</code></td>
-        <td><code>${escapeHtml(ip)}</code></td>
+        <td>${status}</td>
+        <td>${conns}</td>
         <td>${escapeHtml(ver)}</td>
+        <td><code>${escapeHtml(tIn)} / ${escapeHtml(tOut)}</code></td>
       </tr>`;
     }).join('');
-    proxiesHtml = `<table class="w-full text-sm">
+    proxiesHtml = `<div class="overflow-x-auto">
+    <table class="w-full text-sm">
       <thead><tr class="text-left text-gray-400 border-b border-gray-700">
         <th class="py-2 pr-2">代理名</th>
         <th class="py-2 pr-2">类型</th>
         <th class="py-2 pr-2">公网端口</th>
-        <th class="py-2 pr-2">本地地址</th>
-        <th class="py-2 pr-2">客户端IP</th>
+        <th class="py-2 pr-2">本地IP</th>
+        <th class="py-2 pr-2">状态</th>
+        <th class="py-2 pr-2">并发</th>
         <th class="py-2 pr-2">版本</th>
+        <th class="py-2 pr-2">今日流量(入/出)</th>
       </tr></thead>
       <tbody>${rows}</tbody>
-    </table>`;
+    </table>
+    </div>`;
   }
 
   return `<div class="panel p-4 mb-4" id="frps-status-panel">
