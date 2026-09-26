@@ -727,10 +727,16 @@ def _auto_recover_instances():
     - 如果 status=running 但 PID 文件失效/进程不存在 → 自动重启
     - 这样容器重建后,frps/frpc 不需要手动重启
     """
+    import sys
+    def log(msg):
+        print(msg, flush=True)
+        sys.stdout.flush()
+    
+    log("[*] 自动恢复检查开始...")
     try:
         instances = db.list_instances()
     except Exception as e:
-        print(f"[!] 自动恢复: 读取实例失败: {e}")
+        log(f"[!] 自动恢复: 读取实例失败: {e}")
         return
     recovered = 0
     for inst in instances:
@@ -745,32 +751,39 @@ def _auto_recover_instances():
             # 之前是 running 但进程不在了 → 自动重启
             prev_running = inst.get("status", {}).get("running", False)
             if not status.get("running", False):
-                print(f"[*] 自动恢复实例: {name} (pid 丢失)")
+                log(f"[*] 自动恢复实例: {name} (pid 丢失)")
                 frp_ops.start_binary_instance(name, config_path)
                 # 更新数据库状态
                 db.update_instance_status(name, {"running": True, "status": "running"})
                 recovered += 1
             elif prev_running and not status.get("running"):
                 # 之前 running 现在 not running,说明进程死了,重启
-                print(f"[*] 自动重启实例: {name} (之前 running 现进程丢失)")
+                log(f"[*] 自动重启实例: {name} (之前 running 现进程丢失)")
                 frp_ops.start_binary_instance(name, config_path)
                 db.update_instance_status(name, {"running": True, "status": "running"})
                 recovered += 1
         except Exception as e:
-            print(f"[!] 自动恢复 {name} 失败: {e}")
+            log(f"[!] 自动恢复 {name} 失败: {e}")
     if recovered:
-        print(f"[*] 自动恢复完成: {recovered} 个实例已重启")
+        log(f"[*] 自动恢复完成: {recovered} 个实例已重启")
+    else:
+        log(f"[*] 自动恢复检查完成: 0 个实例需要恢复")
 
 
 def main():
+    import sys
+    def log(msg):
+        print(msg, flush=True)
+        sys.stdout.flush()
     db.init_db()
     port = int(os.environ.get("FRPM_PORT", "8080"))
-    print(f"[*] FRP Manager 启动中... 监听 0.0.0.0:{port}")
-    print(f"[*] 配置目录: {CONFIG_DIR}")
-    print(f"[*] 数据库: {db.DB_PATH}")
-    print(f"[*] 依赖: 仅使用 Python 标准库(无 Flask/psutil/docker)")
+    log(f"[*] FRP Manager 启动中... 监听 0.0.0.0:{port}")
+    log(f"[*] 配置目录: {CONFIG_DIR}")
+    log(f"[*] 数据库: {db.DB_PATH}")
+    log(f"[*] 依赖: 仅使用 Python 标准库(无 Flask/psutil/docker)")
     # 启动时自动恢复 frps/frpc 实例(容器重建后进程会丢失)
     _auto_recover_instances()
+    log(f"[*] HTTP 服务启动,开始接受请求...")
     app.run(host="0.0.0.0", port=port)
 
 
