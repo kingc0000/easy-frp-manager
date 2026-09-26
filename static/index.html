@@ -831,15 +831,121 @@ async function submitNewInstance(e) {
 
 // ============ 实例详情页 ============
 let detailInstance = null;
+let frpsStatusData = null;
 
 async function showDetail(id) {
   try {
     detailInstance = await api(`/api/instances/${id}`);
     renderDetail();
     nav('detail');
+    // 如果是 frps 实例,加载实时状态
+    if (detailInstance.type === 'frps' && detailInstance.status?.running) {
+      loadFrpsStatus(id);
+    }
   } catch (e) {
     toast(`加载失败: ${e.message}`, 'error');
   }
+}
+
+async function loadFrpsStatus(id) {
+  try {
+    const data = await api(`/api/instances/${id}/frps-status`);
+    frpsStatusData = data;
+    // 只渲染 frps 状态面板(不重绘整个 detail 页)
+    const panel = document.getElementById('frps-status-panel');
+    if (panel) panel.outerHTML = renderFrpsStatusPanel(id);
+  } catch (e) {
+    const panel = document.getElementById('frps-status-panel');
+    if (panel) panel.innerHTML = `<div class="text-red-400 text-sm">加载失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderFrpsStatusPanel(id) {
+  const d = frpsStatusData;
+  if (!d) return '<div class="text-gray-500">无数据</div>';
+
+  // 错误状态(实例未启用 webServer 或 frps 进程挂了)
+  if (d.serverinfo && d.serverinfo._error) {
+    return `<div class="panel p-4 mb-4" id="frps-status-panel">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="font-medium">实时状态</h3>
+        <span class="text-xs text-gray-500">webServer: ${escapeHtml(d.web_server_url||'-')}</span>
+      </div>
+      <div class="text-red-400 text-sm">${escapeHtml(d.serverinfo._error)}</div>
+    </div>`;
+  }
+
+  const si = d.serverinfo || {};
+  const proxies = d.proxies || [];
+  const fmtBytes = n => formatBytes(n||0);
+
+  // serverinfo 指标卡
+  const cards = `
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
+      <div class="bg-gray-900 rounded p-3">
+        <p class="text-xs text-gray-500 mb-1">已连接客户端</p>
+        <p class="text-2xl font-semibold">${si.clientCounts || 0}</p>
+      </div>
+      <div class="bg-gray-900 rounded p-3">
+        <p class="text-xs text-gray-500 mb-1">当前连接数</p>
+        <p class="text-2xl font-semibold">${si.curConns || 0}</p>
+      </div>
+      <div class="bg-gray-900 rounded p-3">
+        <p class="text-xs text-gray-500 mb-1">入站流量</p>
+        <p class="text-lg font-semibold">${fmtBytes(si.totalTrafficIn)}</p>
+      </div>
+      <div class="bg-gray-900 rounded p-3">
+        <p class="text-xs text-gray-500 mb-1">出站流量</p>
+        <p class="text-lg font-semibold">${fmtBytes(si.totalTrafficOut)}</p>
+      </div>
+    </div>
+  `;
+
+  // 代理列表
+  let proxiesHtml;
+  if (proxies.length === 0) {
+    proxiesHtml = `<div class="text-center text-gray-500 py-6">无活跃代理(没有 frpc 连上来)</div>`;
+  } else {
+    const rows = proxies.map(p => {
+      const ip = p.ip || p.clientIP || p.host || '-';
+      const ver = p.version || p.clientVersion || '-';
+      const remote = p.remotePort || p.bindPort || p.subdomain || p.group || '-';
+      const local = p.localIP ? `${p.localIP}:${p.localPort}` : (p.group || '-');
+      const name = p.name || p.proxyName || p.id || '-';
+      return `<tr>
+        <td class="font-medium">${escapeHtml(name)}</td>
+        <td><span class="badge badge-blue">${escapeHtml(p._type)}</span></td>
+        <td><code>${escapeHtml(remote)}</code></td>
+        <td><code>${escapeHtml(local)}</code></td>
+        <td><code>${escapeHtml(ip)}</code></td>
+        <td>${escapeHtml(ver)}</td>
+      </tr>`;
+    }).join('');
+    proxiesHtml = `<table class="w-full text-sm">
+      <thead><tr class="text-left text-gray-400 border-b border-gray-700">
+        <th class="py-2 pr-2">代理名</th>
+        <th class="py-2 pr-2">类型</th>
+        <th class="py-2 pr-2">公网端口</th>
+        <th class="py-2 pr-2">本地地址</th>
+        <th class="py-2 pr-2">客户端IP</th>
+        <th class="py-2 pr-2">版本</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
+
+  return `<div class="panel p-4 mb-4" id="frps-status-panel">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="font-medium">实时状态 (frps dashboard)</h3>
+      <div class="flex items-center gap-3">
+        <span class="text-xs text-gray-500">webServer: <code>${escapeHtml(d.web_server_url||'-')}</code></span>
+        <button onclick="loadFrpsStatus(${id})" class="btn-ghost text-sm">刷新</button>
+      </div>
+    </div>
+    ${cards}
+    <h4 class="text-sm font-medium mb-2">代理列表 (${proxies.length})</h4>
+    ${proxiesHtml}
+  </div>`;
 }
 
 function renderDetail() {
@@ -859,6 +965,7 @@ function renderDetail() {
       <button onclick="restartInstance(${i.id})" class="btn-ghost">重启</button>
       <button onclick="deleteInstance(${i.id})" class="btn-danger">删除</button>
     </div>
+    ${i.type === 'frps' && running ? `<div class="panel p-4 mb-4" id="frps-status-panel"><div class="text-gray-500 text-sm">加载实时状态中...</div></div>` : ''}
     <div class="grid grid-cols-2 gap-4 mb-4">
       <div class="panel p-4">
         <h3 class="font-medium mb-2">实例信息</h3>

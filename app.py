@@ -11,6 +11,10 @@
 import os
 import socket
 import time
+import urllib.request
+import urllib.error
+import base64
+import tomllib
 from pathlib import Path
 
 import auth
@@ -116,6 +120,69 @@ def api_dashboard(ctx):
 
 
 # ============ 实例 API ============
+
+@app.get("/api/instances/:id/frps-status")
+def api_frps_status(ctx):
+    """代理 frps dashboard API 数据(serverinfo + 各类代理)。
+
+    从实例配置 TOML 读 webServer.addr/port/user/password,
+    后端发起 HTTP 请求调用 frps 内置 dashboard API,聚合返回。
+    """
+    instance_id = int(ctx["params"]["id"])
+    inst = db.get_instance(instance_id)
+    if not inst:
+        return 404, {"error": "not found"}
+    if inst["type"] != "frps":
+        return 400, {"error": "not frps instance"}
+
+    # 解析实例配置 TOML
+    try:
+        with open(inst["config_path"], "rb") as f:
+            cfg = tomllib.load(f)
+    except Exception as e:
+        return 500, {"error": f"配置读取失败: {e}"}
+
+    ws = cfg.get("webServer") or {}
+    if not ws.get("addr") or not ws.get("port"):
+        return 400, {"error": "实例未启用 webServer,请先在配置里加 webServer.addr/port"}
+
+    base_url = f"http://{ws['addr']}:{ws['port']}"
+    if base_url.startswith("http://0.0.0.0"):
+        base_url = base_url.replace("0.0.0.0", "127.0.0.1")
+
+    # Basic Auth 头
+    auth_header = {}
+    if ws.get("user") and ws.get("password"):
+        cred = f"{ws['user']}:{ws['password']}"
+        auth_header["Authorization"] = "Basic " + base64.b64encode(cred.encode()).decode()
+
+    def fetch(path):
+        req = urllib.request.Request(base_url + path, headers=auth_header)
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                import json as _json
+                return _json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            return {"_error": f"HTTP {e.code}: {e.reason}"}
+        except urllib.error.URLError as e:
+            return {"_error": f"连接失败: {e.reason}"}
+        except Exception as e:
+            return {"_error": str(e)}
+
+    # 聚合 serverinfo + 各类代理
+    serverinfo = fetch("/api/serverinfo")
+    proxies = []
+    for ptype in ["tcp", "udp", "http", "https", "tcpmux", "stcp", "sudp"]:
+        data = fetch(f"/api/proxy/{ptype}")
+        for p in (data.get("proxies") or []):
+            p["_type"] = ptype
+            proxies.append(p)
+
+    return 200, {
+        "web_server_url": base_url,
+        "serverinfo": serverinfo,
+        "proxies": proxies,
+    }
 
 @app.get("/api/instances")
 def api_list_instances(ctx):
