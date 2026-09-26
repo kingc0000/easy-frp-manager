@@ -723,9 +723,12 @@ def _pick_frpc_fields(data: dict) -> dict:
 def _auto_recover_instances():
     """启动时自动恢复所有 binary 模式的实例(容器重建后 frp 进程会丢失)。
     
-    遍历数据库实例,对 deploy_mode='binary' 的实例检查:
-    - 如果 status=running 但 PID 文件失效/进程不存在 → 自动重启
-    - 这样容器重建后,frps/frpc 不需要手动重启
+    遍历数据库实例,对 deploy_mode='binary' 的实例:
+    - 检查进程是否还活着(PID 文件 + /proc/<pid>/stat 排除僵尸)
+    - 如果进程不在 → 自动重启
+    - 状态是动态查的,不需要写数据库
+    
+    这样容器重建后,frps/frpc 不需要手动重启。
     """
     import sys
     def log(msg):
@@ -748,20 +751,14 @@ def _auto_recover_instances():
             continue
         try:
             status = frp_ops.get_binary_status(name, config_path)
-            # 之前是 running 但进程不在了 → 自动重启
-            prev_running = inst.get("status", {}).get("running", False)
             if not status.get("running", False):
-                log(f"[*] 自动恢复实例: {name} (pid 丢失)")
-                frp_ops.start_binary_instance(name, config_path)
-                # 更新数据库状态
-                db.update_instance_status(name, {"running": True, "status": "running"})
-                recovered += 1
-            elif prev_running and not status.get("running"):
-                # 之前 running 现在 not running,说明进程死了,重启
-                log(f"[*] 自动重启实例: {name} (之前 running 现进程丢失)")
-                frp_ops.start_binary_instance(name, config_path)
-                db.update_instance_status(name, {"running": True, "status": "running"})
-                recovered += 1
+                log(f"[*] 自动恢复实例: {name} (进程丢失)")
+                result = frp_ops.start_binary_instance(name, config_path)
+                if result.get("success"):
+                    log(f"[*] 实例 {name} 已启动, pid={result.get('pid')}")
+                    recovered += 1
+                else:
+                    log(f"[!] 启动 {name} 失败: {result.get('error')}")
         except Exception as e:
             log(f"[!] 自动恢复 {name} 失败: {e}")
     if recovered:
