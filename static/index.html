@@ -556,7 +556,7 @@ function renderConfigFields() {
         </div>
         <div>
           <label class="block text-sm text-gray-400 mb-1">监听端口 (bindPort) <span class="text-red-400">*</span></label>
-          <input type="number" name="bind_port" value="7000" min="1" max="65535" class="input">
+          <input type="number" name="bind_port" value="2005" min="1" max="65535" class="input">
           <p class="text-xs text-gray-500 mt-1">frpc 连接此端口。注意:需要在安全组放行此端口</p>
         </div>
       </div>
@@ -631,7 +631,7 @@ function renderServersSection() {
         </div>
         <div>
           <label class="block text-xs text-gray-500 mb-1">端口</label>
-          <input type="number" placeholder="如: 2005" value="${s.serverPort||7000}" data-field="serverPort" class="input">
+          <input type="number" placeholder="如: 2005" value="${s.serverPort||2005}" data-field="serverPort" class="input">
         </div>
       </div>
       <div class="mt-2">
@@ -710,7 +710,7 @@ function renderProxyRow(p, i) {
 }
 
 function addServer() {
-  newInstanceState.servers.push({ name: 'srv'+(newInstanceState.servers.length+1), serverAddr: '', serverPort: 7000, token: '' });
+  newInstanceState.servers.push({ name: 'srv'+(newInstanceState.servers.length+1), serverAddr: '', serverPort: 2005, token: '' });
   renderServersSection();
 }
 function removeServer(i) {
@@ -744,7 +744,7 @@ function onTypeChange(val) {
   // 切换 frps/frpc 时,重置配置字段
   newInstanceState.type = val;
   if (val === 'frpc') {
-    newInstanceState.servers = newInstanceState.servers.length ? newInstanceState.servers : [{ name: 'default', serverAddr: '', serverPort: 7000, token: '' }];
+    newInstanceState.servers = newInstanceState.servers.length ? newInstanceState.servers : [{ name: 'default', serverAddr: '', serverPort: 2005, token: '' }];
     newInstanceState.proxies = newInstanceState.proxies.length ? newInstanceState.proxies : [{ name: 'proxy1', type: 'tcp', local_ip: '127.0.0.1', local_port: 80, remote_port: 8080, custom_domains: [] }];
   } else {
     newInstanceState.servers = [];
@@ -790,7 +790,7 @@ function collectFormData() {
       el.querySelectorAll('[data-field]').forEach(inp => {
         f[inp.dataset.field] = inp.value;
       });
-      f.serverPort = parseInt(f.serverPort) || 7000;
+      f.serverPort = parseInt(f.serverPort) || 2005;
       servers.push(f);
     });
     const proxies = [];

@@ -9,6 +9,7 @@
 """
 
 import os
+import socket
 import time
 from pathlib import Path
 
@@ -122,7 +123,7 @@ def api_list_instances(ctx):
     instances = db.list_instances()
     for inst in instances:
         if inst["deploy_mode"] == "binary":
-            status = frp_ops.get_binary_status(inst["name"])
+            status = frp_ops.get_binary_status(inst["name"], inst["config_path"])
         else:
             status = frp_ops.get_container_status(inst["name"])
         inst["status"] = status
@@ -137,7 +138,7 @@ def api_get_instance(ctx):
     if not inst:
         return 404, {"error": "not found"}
     if inst["deploy_mode"] == "binary":
-        status = frp_ops.get_binary_status(inst["name"])
+        status = frp_ops.get_binary_status(inst["name"], inst["config_path"])
     else:
         status = frp_ops.get_container_status(inst["name"])
     inst["status"] = status
@@ -154,15 +155,15 @@ def api_create_instance(ctx):
     data = ctx["body"] or {}
     name = (data.get("name") or "").strip()
     instance_type = (data.get("type") or "").strip()
-    deploy_mode = data.get("deploy_mode", "docker")
+    deploy_mode = data.get("deploy_mode", "binary")
     config_data = data.get("config") or {}
 
     if not name or not instance_type:
         return 400, {"error": "name and type required"}
     if instance_type not in ("frps", "frpc"):
         return 400, {"error": "type must be frps or frpc"}
-    if deploy_mode not in ("docker", "binary"):
-        return 400, {"error": "deploy_mode must be docker or binary"}
+    if deploy_mode != "binary":
+        return 400, {"error": "deploy_mode must be binary (集成模式,frp进程在frpm容器内运行)"}
     if db.get_instance_by_name(name):
         return 409, {"error": f"实例名重复: {name}"}
 
@@ -171,6 +172,11 @@ def api_create_instance(ctx):
         bin_path = frp_ops.resolve_binary(instance_type)
         if not bin_path:
             return 400, {"error": f"未找到 frp 二进制({instance_type}),请检查 bin/ 目录"}
+
+    # 端口冲突检查(防止 frps bind_port 被占用或与其它实例重复)
+    conflict = _check_port_conflict(instance_type, config_data, exclude_name=name)
+    if conflict:
+        return 400, {"error": f"端口冲突: {conflict}"}
 
     # 生成配置文件
     config_path = str(CONFIG_DIR / f"{name}.toml")
@@ -194,25 +200,16 @@ def api_create_instance(ctx):
 
     result = {"instance_id": instance_id, "config_path": config_path}
 
-    if deploy_mode == "docker":
-        container_result = frp_ops.create_frp_container(
-            instance_name=name,
-            instance_type=instance_type,
-            config_path=config_path,
-        )
-        result["container"] = container_result
-        if not container_result.get("success"):
-            return 200, result
-    elif deploy_mode == "binary":
-        binary_result = frp_ops.create_binary_instance(
-            instance_name=name,
-            instance_type=instance_type,
-            config_path=config_path,
-            bin_path=frp_ops.resolve_binary(instance_type),
-        )
-        result["service"] = binary_result
-        if not binary_result.get("success"):
-            return 200, result
+    # 集成模式:frp进程在frpm容器内直接运行(binary模式)
+    binary_result = frp_ops.create_binary_instance(
+        instance_name=name,
+        instance_type=instance_type,
+        config_path=config_path,
+        bin_path=frp_ops.resolve_binary(instance_type),
+    )
+    result["service"] = binary_result
+    if not binary_result.get("success"):
+        return 200, result
     return 201, result
 
 
@@ -248,7 +245,7 @@ def api_update_instance(ctx):
     result = {"success": True}
     if restart:
         if inst["deploy_mode"] == "binary":
-            restart_result = frp_ops.restart_binary_instance(inst["name"])
+            restart_result = frp_ops.restart_binary_instance(inst["name"], inst["config_path"])
         else:
             restart_result = frp_ops.restart_instance(inst["name"])
         result["restart"] = restart_result
@@ -264,7 +261,7 @@ def api_delete_instance(ctx):
 
     result = {"deleted": {}}
     if inst["deploy_mode"] == "binary":
-        result["service"] = frp_ops.delete_binary_instance(inst["name"])
+        result["service"] = frp_ops.delete_binary_instance(inst["name"], inst["config_path"])
     else:
         result["container"] = frp_ops.delete_instance_container(inst["name"])
     try:
@@ -284,7 +281,7 @@ def api_start_instance(ctx):
     if not inst:
         return 404, {"error": "not found"}
     if inst["deploy_mode"] == "binary":
-        return 200, frp_ops.start_binary_instance(inst["name"])
+        return 200, frp_ops.start_binary_instance(inst["name"], inst["config_path"])
     return 200, frp_ops.start_instance(inst["name"])
 
 
@@ -294,7 +291,7 @@ def api_stop_instance(ctx):
     if not inst:
         return 404, {"error": "not found"}
     if inst["deploy_mode"] == "binary":
-        return 200, frp_ops.stop_binary_instance(inst["name"])
+        return 200, frp_ops.stop_binary_instance(inst["name"], inst["config_path"])
     return 200, frp_ops.stop_instance(inst["name"])
 
 
@@ -304,7 +301,7 @@ def api_restart_instance(ctx):
     if not inst:
         return 404, {"error": "not found"}
     if inst["deploy_mode"] == "binary":
-        return 200, frp_ops.restart_binary_instance(inst["name"])
+        return 200, frp_ops.restart_binary_instance(inst["name"], inst["config_path"])
     return 200, frp_ops.restart_instance(inst["name"])
 
 
@@ -352,25 +349,7 @@ def api_proxy_types(ctx):
     }
 
 
-# ============ 安装/卸载 API ============
-
-@app.post("/api/install/docker")
-def api_install_docker(ctx):
-    return 200, frp_ops.install_frp_docker()
-
-
-@app.post("/api/install/binary")
-def api_install_binary(ctx):
-    data = ctx["body"] or {}
-    return 200, frp_ops.install_frp_binary(
-        version=data.get("version", frp_ops.DEFAULT_VERSION),
-        install_type=data.get("install_type", "both"),
-    )
-
-
-@app.post("/api/uninstall/binary")
-def api_uninstall_binary(ctx):
-    return 200, frp_ops.uninstall_frp_binary()
+# ============ 安装/卸载 API (frp二进制内置于镜像,无需安装API) ============
 
 
 @app.get("/api/install/versions")
@@ -484,6 +463,77 @@ def api_auth_me(ctx):
 
 
 # ============ 工具函数:从表单数据构造 dataclass ============
+
+def _is_port_free(port: int, host: str = "0.0.0.0") -> bool:
+    """用 socket 绑定测试端口是否可用(True=空闲)。"""
+    if port is None or not (1 <= port <= 65535):
+        return True
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+    try:
+        s.bind((host, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def _check_port_conflict(instance_type: str, config_data: dict, exclude_name: str = None) -> str:
+    """检查端口冲突,返回冲突描述或空字符串。
+
+    检查两类:
+    1. frps 的 bind_port / vhost 端口 / web_server_port 是否已被占用
+    2. 是否与其他实例(数据库)的 frps bind_port 重复
+    """
+    # 收集本实例的 frps 监听端口
+    ports = {}
+    if instance_type == "frps":
+        bp = config_data.get("bind_port")
+        if bp:
+            try:
+                ports["bindPort"] = int(bp)
+            except (ValueError, TypeError):
+                pass
+        kbp = config_data.get("kcp_bind_port")
+        if kbp:
+            try:
+                ports["kcpBindPort"] = int(kbp)
+            except (ValueError, TypeError):
+                pass
+        for vk in ("vhost_http_port", "vhost_https_port", "web_server_port"):
+            v = config_data.get(vk)
+            if v:
+                try:
+                    ports[vk] = int(v)
+                except (ValueError, TypeError):
+                    pass
+
+    # 检查端口是否被系统占用
+    for pname, p in ports.items():
+        if not _is_port_free(p):
+            return f"{pname} 端口 {p} 已被占用"
+
+    # 检查是否与其他 frps 实例的 bind_port 重复
+    if instance_type == "frps" and "bindPort" in ports:
+        for inst in db.list_instances():
+            if inst["name"] == exclude_name:
+                continue
+            if inst["type"] != "frps":
+                continue
+            try:
+                with open(inst["config_path"]) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("bindPort") and "=" in line:
+                            other_bp = int(line.split("=")[1].strip())
+                            if other_bp == ports["bindPort"]:
+                                return f"bindPort {ports['bindPort']} 与实例 {inst['name']} 冲突"
+            except (OSError, ValueError):
+                continue
+
+    return ""
+
 
 def _pick_frps_fields(data: dict) -> dict:
     """从表单数据构造 FrpsConfig 字段。

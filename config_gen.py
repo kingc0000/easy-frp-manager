@@ -11,7 +11,7 @@ from typing import List, Optional
 class FrpsConfig:
     """frps 服务端配置。"""
     bind_addr: str = "0.0.0.0"
-    bind_port: int = 7000
+    bind_port: int = 2005
     kcp_bind_port: Optional[int] = None
     proxy_bind_addr: Optional[str] = None
     vhost_http_port: Optional[int] = None
@@ -25,7 +25,7 @@ class FrpsConfig:
     transport_tls_force: Optional[bool] = None
     transport_tls_cert_file: Optional[str] = None
     transport_tls_key_file: Optional[str] = None
-    log_to: str = "/frp/logs/frps.log"
+    log_to: Optional[str] = None
     log_level: str = "info"
     log_max_days: int = 3
     web_server_addr: Optional[str] = None
@@ -76,12 +76,13 @@ class FrpsConfig:
             lines.append(f'transport.tls.keyFile = "{self.transport_tls_key_file}"')
 
         # 日志
-        lines += [
-            "",
-            f'log.to = "{self.log_to}"',
-            f'log.level = "{self.log_level}"',
-            f'log.maxDays = {self.log_max_days}',
-        ]
+        # log.to 默认为 None(不写),frp 默认输出到 stdout,被 frp_ops 重定向到 /data/frpm/logs/
+        # 只有用户显式指定 log_to 时才写进配置
+        if self.log_to:
+            lines.append("")
+            lines.append(f'log.to = "{self.log_to}"')
+            lines.append(f'log.level = "{self.log_level}"')
+            lines.append(f'log.maxDays = {self.log_max_days}')
 
         # Dashboard / WebServer
         if self.web_server_addr or self.web_server_port:
@@ -236,7 +237,7 @@ class FrpcConfig:
     transport_tls_cert_file: Optional[str] = None
     transport_tls_key_file: Optional[str] = None
     transport_bandwidth_limit: Optional[str] = None
-    log_to: str = "/frp/logs/frpc.log"
+    log_to: Optional[str] = None
     log_level: str = "info"
     log_max_days: int = 3
     web_server_addr: Optional[str] = None
@@ -297,10 +298,13 @@ class FrpcConfig:
             lines.append(f'transport.bandwidthLimit = "{self.transport_bandwidth_limit}"')
 
         # 日志
-        lines.append("")
-        lines.append(f'log.to = "{self.log_to}"')
-        lines.append(f'log.level = "{self.log_level}"')
-        lines.append(f'log.maxDays = {self.log_max_days}')
+        # log.to 默认为 None(不写),frp 默认输出到 stdout,被 frp_ops 重定向到 /data/frpm/logs/
+        # 只有用户显式指定 log_to 时才写进配置
+        if self.log_to:
+            lines.append("")
+            lines.append(f'log.to = "{self.log_to}"')
+            lines.append(f'log.level = "{self.log_level}"')
+            lines.append(f'log.maxDays = {self.log_max_days}')
 
         # Dashboard
         if self.web_server_addr or self.web_server_port:
@@ -332,7 +336,7 @@ def default_server_template() -> dict:
     return {
         "name": "my-server",
         "serverAddr": "127.0.0.1",
-        "serverPort": 7000,
+        "serverPort": 2005,
         "token": "your_token_here",
     }
 

@@ -54,6 +54,116 @@ def resolve_binary(frp_type: str) -> Optional[str]:
     )
 
 
+# === 进程管理(binary 模式:容器内直接 nohup frps/frpc,不用 systemctl) ===
+# frpm 跑在 Docker 容器里,容器内没有 systemd/systemctl。
+# 所以 binary 模式改为:用 start_new_session 把 frp 放到独立会话里直接起,
+# 用 PID 文件跟踪进程,用 /proc 文件系统查进程存活(slim 镜像没有 pgrep/pkill)。
+# 注意:frpm 和 frp 是同一个容器,容器重建时 frp 进程会一起消失(这是设计如此)。
+
+RUNTIME_DIR = os.environ.get(
+    "FRPM_RUNTIME_DIR",
+    "/var/lib/frpm" if os.path.isdir("/var/lib/frpm") else "/data/frpm",
+)
+PROC_DIR = os.path.join(RUNTIME_DIR, "proc")
+LOG_DIR = os.environ.get("FRPM_LOG_DIR", "/data/frpm/logs")
+
+
+def _log_dir() -> str:
+    """确保日志目录存在并返回路径。"""
+    os.makedirs(LOG_DIR, exist_ok=True)
+    return LOG_DIR
+
+
+def _pidfile(instance_name: str) -> str:
+    """确保 proc 目录存在并返回该实例的 PID 文件路径。"""
+    os.makedirs(PROC_DIR, exist_ok=True)
+    return os.path.join(PROC_DIR, f"{instance_name}.pid")
+
+
+def _running_frps_cmdline() -> dict:
+    """扫描 /proc,找出正在运行的 frp 进程。
+
+    返回 {pid: cmdline_string}。用于容器重启后(无 PID 文件时)仍能查到 frp 进程。
+    """
+    found = {}
+    try:
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                with open(f"/proc/{entry}/cmdline", "rb") as f:
+                    cmdline = f.read().replace(b"\x00", b" ").decode(errors="replace")
+            except (FileNotFoundError, PermissionError, ProcessLookupError):
+                continue
+            # 跳过 grep 自身,只匹配 frps / frpc 作为主程序
+            if "grep" in cmdline:
+                continue
+            # cmdline 形如 "/app/bin/frps -c /path/to/config.toml"
+            parts = cmdline.split()
+            if parts and parts[0].rstrip("/") in ("/app/bin/frps", "/app/bin/frpc", "frps", "frpc"):
+                found[int(entry)] = cmdline
+    except Exception:
+        pass
+    return found
+
+
+def _find_pid_by_config(instance_name: str, config_path: str) -> Optional[int]:
+    """按配置文件路径匹配运行中的 frp 进程 PID。"""
+    cfg = os.path.abspath(config_path) if config_path else None
+    for pid, cmdline in _running_frps_cmdline().items():
+        if cfg and cfg in cmdline:
+            return pid
+    return None
+
+
+def _read_pid(instance_name: str, config_path: str = None) -> Optional[int]:
+    """获取实例当前 PID:先读 PID 文件,失效则按配置文件匹配进程。"""
+    pf = _pidfile(instance_name)
+    if os.path.exists(pf):
+        try:
+            with open(pf) as f:
+                pid = int(f.read().strip())
+            # 验证进程是否还活着
+            try:
+                os.kill(pid, 0)  # 信号 0 仅探测存活,不杀进程
+                return pid
+            except (ProcessLookupError, PermissionError):
+                os.remove(pf)
+        except (ValueError, OSError):
+            pass
+    # PID 文件无效时按配置文件路径匹配
+    return _find_pid_by_config(instance_name, config_path)
+
+
+def _write_pid(instance_name: str, pid: int) -> None:
+    """写入 PID 文件。"""
+    try:
+        with open(_pidfile(instance_name), "w") as f:
+            f.write(str(pid))
+    except OSError:
+        pass
+
+
+def _kill_process(pid: int) -> bool:
+    """终止进程(先 TERM 优雅退出,超时则 KILL)。"""
+    import signal
+    try:
+        os.kill(pid, signal.SIGTERM)
+        # 等最多 3 秒
+        for _ in range(15):
+            try:
+                os.kill(pid, 0)
+                time.sleep(0.2)
+            except ProcessLookupError:
+                return True
+        os.kill(pid, signal.SIGKILL)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return True
+    except Exception:
+        return False
+
+
 @dataclass
 class FrpStatus:
     """frp 状态探测结果。"""
@@ -215,393 +325,148 @@ FRP_VERSIONS = ["v0.61.1", "v0.60.0", "v0.59.0", "v0.58.0", "v0.57.0", "v0.56.0"
 DEFAULT_VERSION = FRP_VERSIONS[0]
 
 
-def install_frp_binary(version: str = DEFAULT_VERSION,
-                       install_type: str = "both",
-                       install_dir: str = "/usr/local/bin") -> dict:
-    """从 frp 官方 GitHub Releases 下载二进制并安装到宿主机。
-
-    仅适用于 Docker 模式不可用的场景。需要 systemd 权限创建服务。
-    """
-    result = {"success": False, "version": version, "messages": []}
-    target_dir = install_dir
-
-    # 下载 URL 模板
-    arch = "amd64" if os.uname().machine == "x86_64" else "arm64"
-    base_url = (
-        f"https://github.com/fatedier/frp/releases/download/{version}/"
-        f"frp_{version}_linux_{arch}"
-    )
-
-    try:
-        import requests
-        r = requests.get(base_url, timeout=120, stream=True)
-        if r.status_code != 200:
-            raise RuntimeError(f"下载失败: HTTP {r.status_code}")
-        with open("/tmp/frp.tar.gz", "wb") as f:
-            for chunk in r.iter_content(chunk_size=65536):
-                f.write(chunk)
-        result["messages"].append(f"已下载 {os.path.getsize('/tmp/frp.tar.gz')} 字节")
-
-        # 解压
-        subprocess.run(
-            ["tar", "xzf", "/tmp/frp.tar.gz", "-C", "/tmp"],
-            check=True, timeout=60,
-        )
-        result["messages"].append("已解压")
-
-        # 安装二进制
-        for typ in ([install_type] if install_type in ("frps", "frpc") else ["frps", "frpc"]):
-            src = f"/tmp/frp_{version}_linux_{arch}/{typ}"
-            if not os.path.exists(src):
-                raise FileNotFoundError(f"未找到 {src}")
-            os.chmod(src, 0o755)
-            shutil.copy(src, os.path.join(target_dir, typ))
-            result["messages"].append(f"已安装 {typ} -> {target_dir}/{typ}")
-
-        result["success"] = True
-    except Exception as e:
-        result["messages"].append(f"安装失败: {e}")
-    finally:
-        shutil.rmtree(f"/tmp/frp_{version}_linux_{arch}", ignore_errors=True)
-        os.path.exists("/tmp/frp.tar.gz") and os.remove("/tmp/frp.tar.gz")
-
-    return result
-
-
-def install_frp_docker(image: str = "snowdreamtech/frps:latest",
-                       image_c: str = "snowdreamtech/frpc:latest") -> dict:
-    """拉取 frp Docker 镜像,供后续创建实例使用。"""
-    result = {"success": True, "messages": []}
-    for img_name, alias in [(image, "frps"), (image_c, "frpc")]:
-        # 检查镜像是否已存在
-        r = subprocess.run(
-            ["docker", "image", "inspect", img_name],
-            capture_output=True, text=True, timeout=10,
-        )
-        if r.returncode == 0:
-            result["messages"].append(f"{img_name} 已存在")
-            continue
-        # 拉取
-        try:
-            r = subprocess.run(
-                ["docker", "pull", img_name],
-                capture_output=True, text=True, timeout=600,
-            )
-            if r.returncode == 0:
-                result["messages"].append(f"已拉取 {img_name}")
-            else:
-                result["messages"].append(f"拉取 {img_name} 失败: {r.stderr.strip()[:200]}")
-                result["success"] = False
-        except Exception as e:
-            result["messages"].append(f"拉取 {img_name} 失败: {e}")
-            result["success"] = False
-    return result
-
-
-def uninstall_frp_binary() -> dict:
-    """卸载本机 frp 二进制和 systemd 服务。"""
-    result = {"success": True, "messages": []}
-    for name in ("frps", "frpc"):
-        try:
-            subprocess.run(["systemctl", "stop", name], capture_output=True, timeout=10)
-            subprocess.run(["systemctl", "disable", name], capture_output=True, timeout=10)
-            os.path.exists(f"/etc/systemd/system/{name}.service") and \
-                os.remove(f"/etc/systemd/system/{name}.service")
-        except Exception as e:
-            result["messages"].append(f"stop {name}: {e}")
-    subprocess.run(["systemctl", "daemon-reload"], capture_output=True)
-    for path in ("/usr/local/bin/frps", "/usr/local/bin/frpc"):
-        if os.path.exists(path):
-            os.remove(path)
-            result["messages"].append(f"已删除 {path}")
-    return result
-
-
-# === 二进制部署模式:用 systemd 服务管理 ===
-
-SYSTEMD_TEMPLATE = """[Unit]
-Description={binary} instance: {name}
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart={bin_path} -c {config_path}
-WorkingDirectory=/root
-Restart=always
-RestartSec=5
-LimitNOFILE=65535
-MemoryMax=512M
-
-[Install]
-WantedBy=multi-user.target
-"""
-
-
-def _systemd_service_name(instance_type: str, instance_name: str) -> str:
-    """生成 systemd 服务名,确保唯一。"""
-    # 例: frps-prod -> frps@prod (用 systemd template)
-    # 简化:直接用 frpm-{name}
-    return f"frpm-{instance_name}"
-
-
-def _write_systemd_service(instance_name: str, instance_type: str,
-                            bin_path: str, config_path: str) -> bool:
-    """写入 systemd service 文件。"""
-    service_name = _systemd_service_name(instance_type, instance_name)
-    service_path = f"/etc/systemd/system/{service_name}.service"
-    content = SYSTEMD_TEMPLATE.format(
-        binary=instance_type,
-        name=instance_name,
-        bin_path=bin_path,
-        config_path=config_path,
-    )
-    with open(service_path, "w") as f:
-        f.write(content)
-    # 重新加载 systemd
-    subprocess.run(["systemctl", "daemon-reload"], capture_output=True, timeout=10)
-    # 启用开机自启
-    subprocess.run(["systemctl", "enable", service_name], capture_output=True, timeout=10)
-    return True
-
-
 def create_binary_instance(instance_name: str,
                             instance_type: str,
                             config_path: str,
                             bin_path: str = None) -> dict:
-    """用 systemd 部署一个 frp 实例(binary 模式)。"""
+    """容器内直接启动一个 frp 进程(binary 模式,不用 systemd)。
+
+    用 setsid + nohup 把 frp 放到独立会话里后台运行,PID 写入 proc 目录,
+    日志写到 LOG_DIR。容器重启后通过 /proc 扫描恢复进程状态。
+    """
     result = {"success": False}
     if not bin_path:
         bin_path = resolve_binary(instance_type)
     if not bin_path:
         return {"success": False, "error": f"未找到 frp 二进制: {instance_type}"}
+    if not os.path.isfile(bin_path):
+        return {"success": False, "error": f"frp 二进制不存在: {bin_path}"}
+    if not os.path.isfile(config_path):
+        return {"success": False, "error": f"配置文件不存在: {config_path}"}
 
     try:
-        # 检查是否已有同名 service
-        service_name = _systemd_service_name(instance_type, instance_name)
-        r = subprocess.run(
-            ["systemctl", "is-active", "--quiet", service_name],
-            capture_output=True, timeout=5,
-        )
-        if r.returncode == 0:
-            return {"success": False, "error": f"服务已存在: {service_name}"}
+        # 检查是否已有同名进程在跑
+        if _read_pid(instance_name, config_path):
+            return {"success": False, "error": f"实例已在运行: {instance_name}"}
 
-        # 写 service 文件并启动
-        _write_systemd_service(instance_name, instance_type, bin_path, config_path)
-        # 启动
-        r = subprocess.run(
-            ["systemctl", "start", service_name],
-            capture_output=True, timeout=15,
-        )
-        if r.returncode != 0:
-            return {"success": False, "error": f"启动失败: {r.stderr.decode() or r.stdout.decode()}"}
+        # 日志文件
+        log_path = os.path.join(_log_dir(), f"{instance_name}.log")
+        with open(log_path, "ab") as logf:
+            # setsid 创建独立会话 + nohup 防 SIGHUP,frp 进程脱离 frpm 独立运行
+            proc = subprocess.Popen(
+                [bin_path, "-c", config_path],
+                stdout=logf, stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                cwd="/",
+                start_new_session=True,  # 新会话,脱离 frpm 父进程,防 frpm 退出时连带杀掉
+            )
+        pid = proc.pid
+        _write_pid(instance_name, pid)
 
-        # 等待一下,确认服务在运行
-        time.sleep(0.5)
-        r = subprocess.run(
-            ["systemctl", "is-active", "--quiet", service_name],
-            capture_output=True, timeout=5,
-        )
+        # 等一会儿确认进程还活着
+        time.sleep(0.6)
+        still_running = False
+        try:
+            os.kill(pid, 0)
+            still_running = True
+        except ProcessLookupError:
+            still_running = False
+
+        if not still_running:
+            # 进程已退出,读日志找原因
+            try:
+                with open(log_path) as f:
+                    err = f.read()[-500:]
+            except OSError:
+                err = ""
+            return {"success": False, "error": f"启动后进程立即退出: {err}"}
+
         result = {
             "success": True,
-            "service_name": service_name,
-            "running": r.returncode == 0,
+            "pid": pid,
+            "bin_path": bin_path,
+            "log_path": log_path,
         }
     except Exception as e:
         result["error"] = str(e)
     return result
 
 
-def get_binary_status(instance_name: str) -> dict:
-    """查询 binary 模式实例的 systemd 状态。"""
-    service_name = _systemd_service_name("frps", instance_name)
-    # 也试试 frpc 命名
-    for prefix in ("frps", "frpc"):
-        sn = _systemd_service_name(prefix, instance_name)
-        r = subprocess.run(
-            ["systemctl", "show", sn, "--property=ActiveState,SubState,MainPID,ExecMainStatusTimestampMonotonic,NRestarts"],
-            capture_output=True, timeout=5,
-        )
-        if r.returncode == 0:
-            props = {}
-            for line in r.stdout.decode().splitlines():
-                if "=" in line:
-                    k, v = line.split("=", 1)
-                    props[k] = v
-            if props.get("ActiveState") in ("active", "inactive", "failed"):
-                return {
-                    "running": props.get("ActiveState") == "active" and props.get("SubState") == "running",
-                    "status": props.get("ActiveState"),
-                    "exit_code": props.get("SubState") == "dead" and int(props.get("ExecMainCode", 0) or 0) or 0,
-                    "started_at": props.get("ExecMainStartTimestamp", ""),
-                    "restarts": int(props.get("NRestarts", 0) or 0),
-                    "service_name": sn,
-                }
-    return {"running": False, "status": "not_found"}
+def get_binary_status(instance_name: str, config_path: str = None) -> dict:
+    """查询 binary 实例进程状态(扫 /proc,不依赖 systemctl)。"""
+    pid = _read_pid(instance_name, config_path)
+    if pid is None:
+        return {"running": False, "status": "stopped"}
+    return {"running": True, "status": "running", "pid": pid}
 
 
-def start_binary_instance(instance_name: str) -> dict:
-    try:
-        for prefix in ("frps", "frpc"):
-            sn = _systemd_service_name(prefix, instance_name)
-            r = subprocess.run(["systemctl", "start", sn], capture_output=True, timeout=15)
-            if r.returncode == 0:
-                return {"success": True, "service": sn}
-        return {"success": False, "error": "服务未找到"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+def start_binary_instance(instance_name: str, config_path: str = None) -> dict:
+    """启动 binary 实例(容器内 nohup frp 进程)。"""
+    # config_path 必须提供(从数据库实例记录里取)
+    if not config_path:
+        return {"success": False, "error": "缺少配置文件路径,无法启动"}
+    # 找实例类型:从配置路径所在实例推断,这里直接用 frps/frpc 都试
+    for frp_type in ("frps", "frpc"):
+        bin_path = resolve_binary(frp_type)
+        if bin_path and os.path.isfile(config_path):
+            r = create_binary_instance(instance_name, frp_type, config_path, bin_path)
+            return r
+    return {"success": False, "error": "未找到 frp 二进制或配置文件"}
 
 
-def stop_binary_instance(instance_name: str) -> dict:
-    try:
-        for prefix in ("frps", "frpc"):
-            sn = _systemd_service_name(prefix, instance_name)
-            r = subprocess.run(["systemctl", "stop", sn], capture_output=True, timeout=15)
-            if r.returncode == 0:
-                return {"success": True, "service": sn}
-        return {"success": False, "error": "服务未找到"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+def stop_binary_instance(instance_name: str, config_path: str = None) -> dict:
+    """停止 binary 实例(杀进程)。"""
+    pid = _read_pid(instance_name, config_path)
+    if pid is None:
+        return {"success": False, "error": "实例未在运行"}
+    if _kill_process(pid):
+        # 清 PID 文件
+        try:
+            os.remove(_pidfile(instance_name))
+        except OSError:
+            pass
+        return {"success": True, "pid": pid}
+    return {"success": False, "error": "停止失败"}
 
 
-def restart_binary_instance(instance_name: str) -> dict:
-    try:
-        for prefix in ("frps", "frpc"):
-            sn = _systemd_service_name(prefix, instance_name)
-            r = subprocess.run(["systemctl", "restart", sn], capture_output=True, timeout=15)
-            if r.returncode == 0:
-                return {"success": True, "service": sn}
-        return {"success": False, "error": "服务未找到"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+def restart_binary_instance(instance_name: str, config_path: str = None) -> dict:
+    """重启 binary 实例。"""
+    stop_binary_instance(instance_name, config_path)
+    time.sleep(0.3)
+    return start_binary_instance(instance_name, config_path)
 
 
 def get_binary_logs(instance_name: str, lines: int = 200) -> str:
-    """获取 binary 实例日志(从 journalctl)。"""
+    """获取 binary 实例日志(从 LOG_DIR 下的日志文件)。"""
+    log_path = os.path.join(_log_dir(), f"{instance_name}.log")
+    if not os.path.isfile(log_path):
+        return f"未找到日志文件: {log_path}"
     try:
-        for prefix in ("frps", "frpc"):
-            sn = _systemd_service_name(prefix, instance_name)
-            r = subprocess.run(
-                ["journalctl", "-u", sn, "-n", str(lines), "--no-pager", "-o", "short-iso"],
-                capture_output=True, timeout=10,
-            )
-            if r.returncode == 0 and r.stdout.strip():
-                return r.stdout.decode("utf-8", errors="replace")
-        return f"未找到服务 {instance_name} 的日志"
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+        return "".join(all_lines[-lines:])
     except Exception as e:
         return f"读取日志失败: {e}"
 
 
 def delete_binary_instance(instance_name: str, remove_config: bool = True) -> dict:
-    """删除 binary 实例(service + 可选配置文件)。"""
+    """删除 binary 实例(停进程 + 清 PID + 可选删配置)。"""
     result = {"success": True}
     try:
-        for prefix in ("frps", "frpc"):
-            sn = _systemd_service_name(prefix, instance_name)
-            subprocess.run(["systemctl", "stop", sn], capture_output=True, timeout=10)
-            subprocess.run(["systemctl", "disable", sn], capture_output=True, timeout=10)
-            svc_path = f"/etc/systemd/system/{sn}.service"
-            if os.path.exists(svc_path):
-                os.remove(svc_path)
-        subprocess.run(["systemctl", "daemon-reload"], capture_output=True, timeout=10)
-        result["deleted_service"] = True
+        pid = _read_pid(instance_name)
+        if pid:
+            _kill_process(pid)
+        try:
+            os.remove(_pidfile(instance_name))
+        except OSError:
+            pass
+        result["deleted_process"] = pid is not None
     except Exception as e:
-        result["service_error"] = str(e)
+        result["process_error"] = str(e)
     return result
 
 
 # === 实例操作 ===
-
-def create_frp_container(instance_name: str,
-                          instance_type: str,
-                          config_path: str,
-                          image: Optional[str] = None,
-                          port_bindings: Optional[dict] = None,
-                          extra_env: Optional[dict] = None) -> dict:
-    """创建一个 frp 实例容器(用 docker CLI)。
-
-    :param instance_name: 唯一实例名(用于 docker 容器名和 label)
-    :param instance_type: 'frps' 或 'frpc'
-    :param config_path: 宿主机上的配置文件绝对路径(容器内挂载为 /etc/frp/frp.toml)
-    :param image: Docker 镜像(默认按类型选)
-    :return: {success, container_name, state, error?}
-    """
-    image = image or (
-        "snowdreamtech/frps:latest" if instance_type == "frps"
-        else "snowdreamtech/frpc:latest"
-    )
-    result = {"success": False}
-
-    # 检查容器是否已存在
-    r = subprocess.run(
-        ["docker", "ps", "-a", "--filter", f"name=^{instance_name}$",
-         "--format", "{{.Names}}"],
-        capture_output=True, text=True, timeout=8,
-    )
-    if instance_name in r.stdout.strip():
-        return {"success": False, "error": f"容器已存在: {instance_name}"}
-
-    # 准备 volume
-    config_path_abs = os.path.abspath(config_path)
-    log_dir = f"/var/lib/frpm/{instance_name}/logs"
-    os.makedirs(log_dir, exist_ok=True)
-
-    # 网络模式
-    network_args = []
-    if instance_type == "frps":
-        # bridge 模式,解析 bindPort 做端口映射
-        import re
-        try:
-            with open(config_path_abs) as f:
-                m = re.search(r'bindPort\s*=\s*(\d+)', f.read())
-            bp = int(m.group(1)) if m else 7000
-            network_args = ["-p", f"{bp}:{bp}"]
-        except Exception:
-            network_args = ["-p", "7000:7000"]
-    else:
-        # host 模式继承宿主机 DNS
-        network_args = ["--network", "host"]
-
-    # 构造 docker run 命令
-    cmd = [
-        "docker", "run", "-d",
-        "--name", instance_name,
-        "--restart", "unless-stopped",
-        "-v", f"{config_path_abs}:/etc/frp/frp.toml:ro",
-        "-v", f"{log_dir}:/frp/logs",
-        "--log-driver", "json-file",
-        "--log-opt", "max-size=10m",
-        "--log-opt", "max-file=3",
-        "--hostname", instance_name,
-        "--label", "frpm.role=" + instance_type,
-        "--label", "frpm.instance=" + instance_name,
-        "--label", "maintainer=frp-manager",
-    ]
-    cmd.extend(network_args)
-    cmd.extend([image, "-c", "/etc/frp/frp.toml"])
-
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        if r.returncode != 0:
-            return {"success": False, "error": r.stderr.strip() or r.stdout.strip()[:500]}
-        # 拿到 container id
-        container_id = r.stdout.strip().split()[0] if r.stdout.strip() else ""
-        # 检查状态
-        r2 = subprocess.run(
-            ["docker", "inspect", "--format", "{{.State.Status}}", instance_name],
-            capture_output=True, text=True, timeout=8,
-        )
-        state = r2.stdout.strip() if r2.returncode == 0 else "unknown"
-        result = {
-            "success": True,
-            "container_id": container_id,
-            "container_name": instance_name,
-            "state": state,
-        }
-    except Exception as e:
-        result["error"] = str(e)
-    return result
-
 
 def get_instance_container(instance_name: str) -> str:
     """返回容器 ID(字符串),用于 docker logs/exec。"""

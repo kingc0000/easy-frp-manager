@@ -15,6 +15,9 @@ WORKDIR /app
 COPY app.py auth.py db.py config_gen.py frp_ops.py http_server.py version.py ./
 COPY static/ static/
 COPY scripts/ scripts/
+# frp 内置二进制(amd64 + arm64)
+# 打包进镜像让 frpm 自包含:可在容器内直接运行 frp(docker run frp-manager:local /app/bin/frps -v)
+COPY bin/ bin/
 
 # 数据目录
 RUN mkdir -p /data/frpm-configs /var/lib/frpm/logs
@@ -28,7 +31,8 @@ ENV FRPM_PORT=8080 \
 EXPOSE 8080
 
 # 健康检查
+# 用免认证的 /api/auth/check 探测(返回 200),不能用需要登录的 /api/dashboard(会 401 误判 unhealthy)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/dashboard', timeout=3)" || exit 1
+  CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/auth/check', timeout=3).read()" || exit 1
 
 CMD ["python3", "app.py"]
