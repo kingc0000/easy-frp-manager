@@ -116,6 +116,27 @@ def _find_pid_by_config(instance_name: str, config_path: str) -> Optional[int]:
     return None
 
 
+def _is_zombie(pid: int) -> bool:
+    """检查 pid 是否是僵尸进程(Z state)。
+    
+    僵尸进程:进程已死但父进程没 wait(),内核保留 PID 表项。
+    os.kill(pid, 0) 对僵尸进程会返回成功(进程表项还在),
+    所以必须额外读 /proc/<pid>/stat 确认 state。
+    """
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            # stat 格式: pid (comm) state ppid ...
+            # comm 可能含空格和括号,所以从最后一个 ')' 后取
+            content = f.read()
+            after_paren = content.rsplit(')', 1)[-1]
+            fields = after_paren.split()
+            if fields:
+                return fields[0] in ('Z', 'z')
+    except (OSError, FileNotFoundError):
+        return False
+    return False
+
+
 def _read_pid(instance_name: str, config_path: str = None) -> Optional[int]:
     """获取实例当前 PID:先读 PID 文件,失效则按配置文件匹配进程。"""
     pf = _pidfile(instance_name)
@@ -123,9 +144,13 @@ def _read_pid(instance_name: str, config_path: str = None) -> Optional[int]:
         try:
             with open(pf) as f:
                 pid = int(f.read().strip())
-            # 验证进程是否还活着
+            # 验证进程是否还活着(排除僵尸进程)
             try:
                 os.kill(pid, 0)  # 信号 0 仅探测存活,不杀进程
+                if _is_zombie(pid):
+                    # 僵尸进程:进程已死但父进程没回收,删除 PID 文件
+                    os.remove(pf)
+                    return None
                 return pid
             except (ProcessLookupError, PermissionError):
                 os.remove(pf)
