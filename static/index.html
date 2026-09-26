@@ -1049,18 +1049,19 @@ function showEditInstanceModal(inst) {
 async function saveInstanceConfig(id) {
   try {
     const config = document.getElementById('edit-config').value;
-    // 用 PUT 接口,直接传原始 toml
-    const resp = await fetch(`/api/instances/${id}`, {
+    // 用 api() 自动带 token,避免裸 fetch 401
+    await api(`/api/instances/${id}`, {
       method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ raw_config: config, restart: true }),
     });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || '保存失败');
     toast('配置已保存,实例重启中...', 'success');
     closeModal();
     setTimeout(() => refreshDetail(id), 1500);
   } catch (e) {
+    if (e.message === '未登录或会话已过期') {
+      showLogin();
+      return;
+    }
     toast(`保存失败: ${e.message}`, 'error');
   }
 }
