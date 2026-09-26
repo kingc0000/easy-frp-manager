@@ -61,7 +61,7 @@
       </div>
       <div class="mb-4">
         <label class="block text-sm text-gray-400 mb-1">密码</label>
-        <input type="password" id="login-password" class="input" placeholder="默认: admin123" required>
+        <input type="password" id="login-password" class="input" required>
       </div>
       <button type="submit" class="btn-primary w-full py-2">登录</button>
     </form>
@@ -505,8 +505,7 @@ function renderNewInstanceModal() {
         <div class="grid grid-cols-2 gap-4">
           <div>
             <label class="block text-sm text-gray-400 mb-1">实例名 <span class="text-red-400">*</span></label>
-            <input type="text" name="name" required pattern="^[a-z][a-z0-9-]{2,30}$"
-              placeholder="frpc-prod" class="input">
+            <input type="text" name="name" required pattern="^[a-z][a-z0-9-]{2,30}$" class="input">
             <p class="text-xs text-gray-500 mt-1">小写字母开头,可用小写字母数字和连字符</p>
           </div>
           <div>
@@ -563,7 +562,7 @@ function renderConfigFields() {
       <div>
         <label class="block text-sm text-gray-400 mb-1">认证 Token (authToken)</label>
         <div class="flex gap-2">
-          <input type="text" name="auth_token" value="" class="input flex-1" placeholder="可留空,但建议设置">
+          <input type="text" name="auth_token" value="" class="input flex-1">
           <button type="button" onclick="generateToken(this)" class="btn-ghost text-sm whitespace-nowrap">🎲 随机生成</button>
         </div>
         <p class="text-xs text-gray-500 mt-1">连接密码,frpc 侧必须填一样的。防止别人乱连你的 frps</p>
@@ -623,20 +622,20 @@ function renderServersSection() {
       <div class="grid grid-cols-3 gap-2">
         <div>
           <label class="block text-xs text-gray-500 mb-1">名称</label>
-          <input type="text" placeholder="default" value="${escapeHtml(s.name||'')}" data-field="name" class="input">
+          <input type="text" value="${escapeHtml(s.name||'')}" data-field="name" class="input">
         </div>
         <div>
           <label class="block text-xs text-gray-500 mb-1">服务端地址</label>
-          <input type="text" placeholder="如: nas.235300.xyz 或 124.221.238.106" value="${escapeHtml(s.serverAddr||'')}" data-field="serverAddr" class="input">
+          <input type="text" value="${escapeHtml(s.serverAddr||'')}" data-field="serverAddr" class="input">
         </div>
         <div>
           <label class="block text-xs text-gray-500 mb-1">端口</label>
-          <input type="number" placeholder="如: 2005" value="${s.serverPort||2005}" data-field="serverPort" class="input">
+          <input type="number" value="${s.serverPort||2005}" data-field="serverPort" class="input">
         </div>
       </div>
       <div class="mt-2">
         <label class="block text-xs text-gray-500 mb-1">Token (跟服务端 frps 的一致)</label>
-        <input type="text" placeholder="粘贴 frps 配置里的 authToken" value="${escapeHtml(s.token||'')}" data-field="token" class="input">
+        <input type="text" value="${escapeHtml(s.token||'')}" data-field="token" class="input">
       </div>
     </div>
   `).join('');
@@ -665,7 +664,7 @@ function renderProxyRow(p, i) {
       <div class="grid grid-cols-2 gap-2 mb-2">
         <div>
           <label class="block text-xs text-gray-500 mb-1">名称</label>
-          <input type="text" placeholder="如: nas-web" value="${escapeHtml(p.name||'')}" data-field="name" class="input">
+          <input type="text" value="${escapeHtml(p.name||'')}" data-field="name" class="input">
         </div>
         <div>
           <label class="block text-xs text-gray-500 mb-1">类型</label>
@@ -683,27 +682,27 @@ function renderProxyRow(p, i) {
       <div class="grid grid-cols-2 gap-2">
         <div>
           <label class="block text-xs text-gray-500 mb-1">服务在哪个地址? (localIP)</label>
-          <input type="text" placeholder="127.0.0.1" value="${escapeHtml(p.local_ip||'127.0.0.1')}" data-field="local_ip" class="input">
+          <input type="text" value="${escapeHtml(p.local_ip||'127.0.0.1')}" data-field="local_ip" class="input">
           <p class="text-xs text-gray-600 mt-1">127.0.0.1 = 就在本机(NAS自己)。一般不用改</p>
         </div>
         <div>
           <label class="block text-xs text-gray-500 mb-1">NAS 上的服务端口 (localPort)</label>
-          <input type="number" placeholder="如: 8080" value="${p.local_port||''}" data-field="local_port" class="input">
+          <input type="number" value="${p.local_port||''}" data-field="local_port" class="input">
           <p class="text-xs text-gray-600 mt-1">你要穿透的服务,在 NAS 上跑的端口</p>
         </div>
       </div>
       ${!isHttp ? `<div class="mt-2">
         <label class="block text-xs text-gray-500 mb-1">腾讯云上开放的端口 (remotePort)</label>
-        <input type="number" placeholder="如: 2008" value="${p.remote_port||''}" data-field="remote_port" class="input">
+        <input type="number" value="${p.remote_port||''}" data-field="remote_port" class="input">
         <p class="text-xs text-gray-600 mt-1">访问者通过 <code>nas.235300.xyz:这个端口</code> 到达 NAS。在 2000-2050 内选,别跟已用的冲突</p>
       </div>` : ''}
       ${isHttp ? `<div class="mt-2">
         <label class="block text-xs text-gray-500 mb-1">域名 (逗号分隔)</label>
-        <input type="text" placeholder="如: nas.235300.xyz" value="${escapeHtml((p.custom_domains||[]).join(','))}" data-field="custom_domains" class="input">
+        <input type="text" value="${escapeHtml((p.custom_domains||[]).join(','))}" data-field="custom_domains" class="input">
       </div>` : ''}
       ${isTunnel ? `<div class="mt-2">
         <label class="block text-xs text-gray-500 mb-1">密钥 (secretKey)</label>
-        <input type="text" placeholder="自定义密钥,访问者也要填一样的" value="${escapeHtml(p.secret_key||'')}" data-field="secret_key" class="input">
+        <input type="text" value="${escapeHtml(p.secret_key||'')}" data-field="secret_key" class="input">
       </div>` : ''}
     </div>
   `;
