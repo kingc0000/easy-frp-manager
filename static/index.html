@@ -302,17 +302,32 @@ async function api(url, options={}) {
   }
   const opts = { ...options, headers: { ...headers, ...(options.headers || {}) } };
   const resp = await fetch(url, opts);
-  // 处理 401:未登录或会话过期,跳转到登录
+  // 401:会话已过期/未登录 —— 清 token,跳登录,并抛错让调用方停止后续操作
   if (resp.status === 401) {
     localStorage.removeItem('frpm_token');
     authToken = '';
     showLogin('');  // 不显示错误消息,直接显示登录页
-    return;
+    const err = new Error('会话已过期,请重新登录');
+    err.authExpired = true;  // 标记,调用方据此跳过 toast
+    throw err;
   }
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
   return data;
 }
+
+// 全局兜底:未捕获的 promise rejection(裸 await api(...) 调用点),
+// 401 静默(已跳登录);其他错误只在控制台警告,不打扰用户。
+window.addEventListener('unhandledrejection', (event) => {
+  const err = event.reason;
+  if (err && err.authExpired) {
+    event.preventDefault();
+    return;
+  }
+  if (err && err.message) {
+    console.warn('未处理的 API 错误:', err.message);
+  }
+});
 
 function toast(msg, type='info') {
   const el = document.createElement('div');
@@ -393,6 +408,7 @@ async function loadInstances() {
     instancesCache = await api('/api/instances');
     renderInstances();
   } catch (e) {
+    if (e && e.authExpired) return;
     document.getElementById('view-instances').innerHTML = `<div class="text-red-400">加载失败: ${e.message}</div>`;
   }
 }
@@ -456,12 +472,17 @@ function renderInstances() {
           ${instancesCache.length === 0 ? `<tr><td colspan="6" class="text-center text-gray-500 py-8">暂无实例,点击"新建实例"开始</td></tr>` :
             instancesCache.map(i => `
             <tr>
-              <td class="font-medium">${escapeHtml(i.name)}</td>
+              <td class="font-medium">
+                <a href="javascript:void(0)" onclick="toggleInstanceProxies(${i.id}, this)" style="color:inherit;text-decoration:none;cursor:${i.type==='frpc'?'pointer':'default'}">
+                  ${i.type==='frpc'?'<span class="text-gray-500 text-xs">▼</span> ':''}${escapeHtml(i.name)}
+                </a>
+              </td>
               <td><span class="badge ${i.type==='frps'?'badge-blue':'badge-gray'}">${i.type}</span></td>
               <td><span class="badge ${i.status?.running?'badge-green':'badge-red'}">${i.status?.running?'运行中':(i.status?.status||'未启动')}</span></td>
               <td>${i.config_exists ? '<span class="text-green-400">✓</span>' : '<span class="text-red-400">✗</span>'}</td>
               <td>${timeAgo(i.updated_at)}</td>
               <td class="space-x-1">
+                ${i.type==='frpc' ? `<button class="btn-ghost text-xs text-blue-400" onclick="showNewProxyModal(${i.id})">+ 新增端口</button>` : ''}
                 <button class="btn-ghost text-xs" onclick="showDetail(${i.id})">详情</button>
                 ${i.status?.running ? '' : `<button class="btn-ghost text-xs text-green-400" onclick="startInstance(${i.id})">启动</button>`}
                 ${i.status?.running ? `<button class="btn-ghost text-xs text-yellow-400" onclick="stopInstance(${i.id})">停止</button>` : ''}
@@ -469,7 +490,10 @@ function renderInstances() {
                 <button class="btn-ghost text-xs text-red-400" onclick="deleteInstance(${i.id})">删除</button>
               </td>
             </tr>
-          `).join('')}
+            ${i.type==='frpc' ? `<tr id="proxies-${i.id}" style="display:none;"><td colspan="6" class="bg-gray-900/40 p-3 border-t border-gray-700">
+              <div id="proxies-content-${i.id}" class="text-gray-500 text-sm py-2">加载中...</div>
+            </td></tr>` : ''}
+            `).join('')}
         </tbody>
       </table>
     </div>
@@ -825,6 +849,7 @@ async function submitNewInstance(e) {
       toast(`容器创建失败: ${result.container.error||''}`, 'error');
     }
   } catch (e) {
+    if (e && e.authExpired) return;
     toast(`创建失败: ${e.message}`, 'error');
   }
 }
@@ -843,6 +868,7 @@ async function showDetail(id) {
       loadFrpsStatus(id);
     }
   } catch (e) {
+    if (e && e.authExpired) return;
     toast(`加载失败: ${e.message}`, 'error');
   }
 }
@@ -855,6 +881,7 @@ async function loadFrpsStatus(id) {
     const panel = document.getElementById('frps-status-panel');
     if (panel) panel.outerHTML = renderFrpsStatusPanel(id);
   } catch (e) {
+    if (e && e.authExpired) return;
     const panel = document.getElementById('frps-status-panel');
     if (panel) panel.innerHTML = `<div class="text-red-400 text-sm">加载失败: ${escapeHtml(e.message)}</div>`;
   }
@@ -1023,6 +1050,7 @@ async function editInstance(id) {
     // 这里用占位提示
     showEditInstanceModal(inst);
   } catch (e) {
+    if (e && e.authExpired) return;
     toast(`加载失败: ${e.message}`, 'error');
   }
 }
@@ -1058,10 +1086,8 @@ async function saveInstanceConfig(id) {
     closeModal();
     setTimeout(() => refreshDetail(id), 1500);
   } catch (e) {
-    if (e.message === '未登录或会话已过期') {
-      showLogin();
-      return;
-    }
+    // 401 已由 api() 内部跳登录;其他错误弹 toast
+    if (e && e.authExpired) return;
     toast(`保存失败: ${e.message}`, 'error');
   }
 }
@@ -1126,26 +1152,337 @@ function toggleLogStream() {
 // ============ 实例操作 ============
 async function startInstance(id) {
   try { await api(`/api/instances/${id}/start`, { method: 'POST' }); toast('启动成功', 'success'); loadInstances(); }
-  catch (e) { toast(`启动失败: ${e.message}`, 'error'); }
+  catch (e) { if (e && e.authExpired) return; toast(`启动失败: ${e.message}`, 'error'); }
 }
 async function stopInstance(id) {
   try { await api(`/api/instances/${id}/stop`, { method: 'POST' }); toast('停止成功', 'success'); loadInstances(); }
-  catch (e) { toast(`停止失败: ${e.message}`, 'error'); }
+  catch (e) { if (e && e.authExpired) return; toast(`停止失败: ${e.message}`, 'error'); }
 }
 async function restartInstance(id) {
   try { await api(`/api/instances/${id}/restart`, { method: 'POST' }); toast('重启成功', 'success'); setTimeout(loadInstances, 1000); }
-  catch (e) { toast(`重启失败: ${e.message}`, 'error'); }
+  catch (e) { if (e && e.authExpired) return; toast(`重启失败: ${e.message}`, 'error'); }
 }
 async function deleteInstance(id) {
   if (!confirm('确定删除此实例?容器和配置都会删除,不可恢复!')) return;
   try { await api(`/api/instances/${id}`, { method: 'DELETE' }); toast('已删除', 'success'); loadInstances(); }
-  catch (e) { toast(`删除失败: ${e.message}`, 'error'); }
+  catch (e) { if (e && e.authExpired) return; toast(`删除失败: ${e.message}`, 'error'); }
 }
 
 function closeModal() {
   if (logStream) { logStream.close(); logStream = null; }
   document.getElementById('modal-container').classList.add('hidden');
   document.getElementById('modal-container').classList.remove('flex');
+}
+
+// ============ 实例展开/收起代理列表 ============
+let expandedInstances = {};
+
+async function toggleInstanceProxies(instanceId, linkEl) {
+  const row = document.getElementById(`proxies-${instanceId}`);
+  const content = document.getElementById(`proxies-content-${instanceId}`);
+  const arrow = linkEl.querySelector('span');
+
+  if (row.style.display === 'none' || !row.style.display) {
+    // 展开
+    row.style.display = 'table-row';
+    if (arrow) arrow.textContent = '▲';
+    if (!expandedInstances[instanceId]) {
+      expandedInstances[instanceId] = true;
+      await loadInstanceProxies(instanceId);
+    }
+  } else {
+    // 收起
+    row.style.display = 'none';
+    if (arrow) arrow.textContent = '▼';
+    expandedInstances[instanceId] = false;
+  }
+}
+
+async function loadInstanceProxies(instanceId) {
+  const content = document.getElementById(`proxies-content-${instanceId}`);
+  if (!content) return;
+  try {
+    const data = await api(`/api/instances/${instanceId}/proxies`);
+    renderProxyList(instanceId, data.proxies || []);
+  } catch (e) {
+    if (e && e.authExpired) return;
+    content.innerHTML = `<div class="text-red-400">加载失败: ${e.message}</div>`;
+  }
+}
+
+function renderProxyList(instanceId, proxies) {
+  const content = document.getElementById(`proxies-content-${instanceId}`);
+  if (!content) return;
+
+  if (proxies.length === 0) {
+    content.innerHTML = `<div class="flex items-center justify-between py-2">
+      <span class="text-gray-500 text-sm">暂无代理规则</span>
+      <button class="btn-ghost text-xs text-blue-400" onclick="showNewProxyModal(${instanceId})">+ 新增端口</button>
+    </div>`;
+    return;
+  }
+
+  let html = `<div class="mb-2 flex justify-end">
+    <button class="btn-ghost text-xs text-blue-400" onclick="showNewProxyModal(${instanceId})">+ 新增端口</button>
+  </div>
+  <div class="space-y-1">`;
+
+  proxies.forEach(p => {
+    const enabled = p.enabled;
+    const statusBadge = enabled
+      ? `<span class="badge badge-green text-xs">启用</span>`
+      : `<span class="badge badge-gray text-xs">禁用</span>`;
+    const toggleBtn = enabled
+      ? `<button class="btn-ghost text-xs text-yellow-400" onclick="toggleProxy(${instanceId}, ${p.id}, false)">停止</button>`
+      : `<button class="btn-ghost text-xs text-green-400" onclick="toggleProxy(${instanceId}, ${p.id}, true)">启动</button>`;
+    let portInfo = '';
+    let extraLine = '';
+    if (p.type === 'tcp' || p.type === 'udp') {
+      portInfo = `${p.local_ip}:${p.local_port} → :${p.remote_port}`;
+    } else if (p.type === 'http' || p.type === 'https') {
+      portInfo = `${p.local_ip}:${p.local_port}`;
+      if (p.custom_domains && p.custom_domains.length) {
+        extraLine = `<br><span class="text-gray-500 text-xs">域名: ${p.custom_domains.join(', ')}</span>`;
+      }
+    } else if (p.type === 'stcp' || p.type === 'xtcp') {
+      // secret_key 脱敏:只显前 4 后 4,中间用 *,长度不够则全显
+      const sk = p.secret_key || '';
+      const masked = sk.length > 8 ? `${sk.slice(0, 4)}…${sk.slice(-4)}` : (sk || '未设置');
+      extraLine = `<br><span class="text-gray-500 text-xs">密钥: <span class="font-mono">${escapeHtml(masked)}</span></span>`;
+    } else {
+      portInfo = `${p.local_ip}:${p.local_port}`;
+    }
+
+    html += `
+    <div class="flex items-center justify-between bg-gray-800 rounded px-3 py-2">
+      <div class="flex-1">
+        <div class="flex items-center gap-2">
+          <span class="font-medium text-sm">${escapeHtml(p.name)}</span>
+          <span class="badge badge-blue text-xs">${escapeHtml(p.type)}</span>
+          ${statusBadge}
+        </div>
+        <div class="text-xs text-gray-400 mt-1">
+          <span class="font-mono">${escapeHtml(portInfo)}</span>${extraLine}
+        </div>
+      </div>
+      <div class="space-x-1">
+        ${toggleBtn}
+        <button class="btn-ghost text-xs" onclick="showEditProxyModal(${instanceId}, ${p.id})">编辑</button>
+        <button class="btn-ghost text-xs text-red-400" onclick="deleteProxy(${instanceId}, ${p.id}, '${escapeHtml(p.name)}')">删除</button>
+      </div>
+    </div>`;
+  });
+
+  html += `</div>`;
+  content.innerHTML = html;
+}
+
+// ============ 新增/编辑代理模态框 ============
+let proxyModalState = { instanceId: null, proxyId: null, isEdit: false };
+
+function showNewProxyModal(instanceId) {
+  proxyModalState = { instanceId, proxyId: null, isEdit: false };
+  renderProxyModal();
+}
+
+function showEditProxyModal(instanceId, proxyId) {
+  proxyModalState = { instanceId, proxyId, isEdit: true };
+  api(`/api/instances/${instanceId}/proxies`).then(data => {
+    const proxy = (data.proxies || []).find(p => p.id === proxyId);
+    if (!proxy) {
+      toast('代理不存在', 'error');
+      return;
+    }
+    proxyModalState.proxy = proxy;
+    renderProxyModal();
+  }).catch(e => {
+    if (e && e.authExpired) return;
+    toast(`加载代理失败: ${e.message}`, 'error');
+  });
+}
+
+function renderProxyModal() {
+  const { isEdit, proxy } = proxyModalState;
+  const title = isEdit ? '编辑代理规则' : '新增代理规则';
+  const p = proxy || {};
+
+  document.getElementById('modal-container').innerHTML = `
+    <div class="bg-gray-900 border border-gray-700 rounded-lg max-w-2xl w-[90%] max-h-[85vh] overflow-y-auto p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold">${title}</h3>
+        <button onclick="closeModal()" class="text-gray-400 hover:text-white text-xl">&times;</button>
+      </div>
+      <form id="proxyForm" class="space-y-4">
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">代理名 <span class="text-red-400">*</span></label>
+            <input type="text" id="proxy-name" required pattern="^[a-zA-Z][a-zA-Z0-9_-]{1,30}$"
+                   value="${p.name ? escapeHtml(p.name) : ''}" class="input">
+            <p class="text-xs text-gray-500 mt-1">小写字母开头,可用字母数字下划线连字符</p>
+          </div>
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">代理类型 <span class="text-red-400">*</span></label>
+            <select id="proxy-type" class="input" onchange="onProxyTypeChange(this.value)">
+              ${['tcp','udp','http','https','stcp','xtcp'].map(t =>
+                `<option value="${t}" ${(p.type||'tcp')===t?'selected':''}>${t}</option>`
+              ).join('')}
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">本地 IP</label>
+            <input type="text" id="proxy-local-ip" value="${p.local_ip || '127.0.0.1'}" class="input">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">本地端口 <span class="text-red-400">*</span></label>
+            <input type="number" id="proxy-local-port" required value="${p.local_port || ''}" class="input">
+          </div>
+        </div>
+
+        <div id="proxy-type-fields"></div>
+
+        <div class="flex gap-2 justify-end pt-4 border-t border-gray-700">
+          <button type="button" onclick="closeModal()" class="btn-ghost">取消</button>
+          <button type="submit" class="btn-primary">${isEdit ? '保存' : '创建'}</button>
+        </div>
+      </form>
+    </div>
+  `;
+
+  renderProxyTypeFields(p.type || 'tcp');
+  document.getElementById('modal-container').classList.remove('hidden');
+  document.getElementById('modal-container').classList.add('flex');
+  document.getElementById('proxyForm').addEventListener('submit', submitProxy);
+}
+
+function renderProxyTypeFields(type) {
+  const p = proxyModalState.proxy || {};
+  let html = '';
+
+  if (type === 'tcp' || type === 'udp') {
+    html += `
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">远程端口 <span class="text-red-400">*</span></label>
+        <input type="number" id="proxy-remote-port" required value="${p.remote_port || ''}" class="input">
+        <p class="text-xs text-gray-500 mt-1">frps 监听的公网端口,客户端通过此端口访问你的服务</p>
+      </div>`;
+  } else if (type === 'http' || type === 'https') {
+    html += `
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">自定义域名</label>
+        <input type="text" id="proxy-custom-domains" value="${p.custom_domains ? p.custom_domains.join(', ') : ''}" class="input">
+        <p class="text-xs text-gray-500 mt-1">多个域名用逗号分隔,如: example.com, api.example.com</p>
+      </div>
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">子域名</label>
+        <input type="text" id="proxy-subdomain" value="${p.subdomain || ''}" class="input">
+        <p class="text-xs text-gray-500 mt-1">配合 frps 的 vhostHTTPPort/vhostHTTPSPort 使用</p>
+      </div>`;
+  } else if (type === 'stcp' || type === 'xtcp') {
+    html += `
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">密钥 <span class="text-red-400">*</span></label>
+        <input type="text" id="proxy-secret-key" required value="${p.secret_key || ''}" class="input">
+        <p class="text-xs text-gray-500 mt-1">点对点隧道密钥,客户端和服务端需使用相同密钥</p>
+      </div>`;
+  }
+
+  document.getElementById('proxy-type-fields').innerHTML = html;
+}
+
+function onProxyTypeChange(type) {
+  renderProxyTypeFields(type);
+}
+
+async function submitProxy(e) {
+  e.preventDefault();
+
+  const instanceId = proxyModalState.instanceId;
+  const isEdit = proxyModalState.isEdit;
+  const proxyId = proxyModalState.proxyId;
+  const original = (isEdit && proxyModalState.proxy) ? { ...proxyModalState.proxy } : {};
+
+  // 编辑时保留原对象的所有字段(高级字段不在 UI 暴露,避免意外清空);
+  // 新建时 data 只包含表单字段。
+  const data = {
+    ...original,
+    name: document.getElementById('proxy-name').value.trim(),
+    type: document.getElementById('proxy-type').value,
+    local_ip: document.getElementById('proxy-local-ip').value.trim(),
+    local_port: parseInt(document.getElementById('proxy-local-port').value, 10),
+  };
+
+  // 根据当前 type 显式设置/清空对应字段,避免切类型时残留旧值
+  const type = data.type;
+  if (type === 'tcp' || type === 'udp') {
+    data.remote_port = parseInt(document.getElementById('proxy-remote-port').value, 10);
+    // 清空其他类型专属字段
+    delete data.custom_domains; delete data.subdomain; delete data.secret_key;
+  } else if (type === 'http' || type === 'https') {
+    const domains = document.getElementById('proxy-custom-domains').value.trim();
+    data.custom_domains = domains ? domains.split(',').map(s => s.trim()).filter(Boolean) : [];
+    const subdomain = document.getElementById('proxy-subdomain').value.trim();
+    data.subdomain = subdomain || null;
+    delete data.remote_port; delete data.secret_key;
+  } else if (type === 'stcp' || type === 'xtcp') {
+    data.secret_key = document.getElementById('proxy-secret-key').value.trim();
+    delete data.remote_port; delete data.custom_domains; delete data.subdomain;
+  }
+
+  try {
+    if (isEdit) {
+      await api(`/api/instances/${instanceId}/proxies/${proxyId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      });
+      toast('代理已更新,实例重启中...', 'success');
+    } else {
+      await api(`/api/instances/${instanceId}/proxies`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+      toast('代理已创建,实例重启中...', 'success');
+    }
+    closeModal();
+    // 刷新代理列表和实例列表
+    if (expandedInstances[instanceId]) {
+      await loadInstanceProxies(instanceId);
+    }
+    setTimeout(() => loadInstances(), 1500);
+  } catch (err) {
+    if (err && err.authExpired) return;  // 401 已跳登录
+    toast(`保存失败: ${err.message}`, 'error');
+  }
+}
+
+async function toggleProxy(instanceId, proxyId, enabled) {
+  try {
+    await api(`/api/instances/${instanceId}/proxies/${proxyId}/toggle`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    });
+    toast(enabled ? '已启用,实例重启中...' : '已禁用,实例重启中...', 'success');
+    await loadInstanceProxies(instanceId);
+    setTimeout(() => loadInstances(), 1500);
+  } catch (err) {
+    if (err && err.authExpired) return;
+    toast(`操作失败: ${err.message}`, 'error');
+  }
+}
+
+async function deleteProxy(instanceId, proxyId, name) {
+  if (!confirm(`确定删除代理 "${name}" 吗?`)) return;
+  try {
+    await api(`/api/instances/${instanceId}/proxies/${proxyId}`, { method: 'DELETE' });
+    toast('代理已删除,实例重启中...', 'success');
+    await loadInstanceProxies(instanceId);
+    setTimeout(() => loadInstances(), 1500);
+  } catch (err) {
+    if (err && err.authExpired) return;
+    toast(`删除失败: ${err.message}`, 'error');
+  }
 }
 
 // ============ 启动 ============

@@ -425,17 +425,37 @@ def get_binary_status(instance_name: str, config_path: str = None) -> dict:
     return {"running": True, "status": "running", "pid": pid}
 
 
-def start_binary_instance(instance_name: str, config_path: str = None) -> dict:
-    """启动 binary 实例(容器内 nohup frp 进程)。"""
+def start_binary_instance(instance_name: str, config_path: str = None,
+                          instance_type: str = None) -> dict:
+    """启动 binary 实例(容器内 nohup frp 进程)。
+
+    instance_type: 'frps' 或 'frpc'。必须明确指定,否则会优先用 frps 二进制
+    启动所有实例,导致 frpc 配置被 frps 二进制错误解析后崩溃。
+    """
     # config_path 必须提供(从数据库实例记录里取)
     if not config_path:
         return {"success": False, "error": "缺少配置文件路径,无法启动"}
-    # 找实例类型:从配置路径所在实例推断,这里直接用 frps/frpc 都试
-    for frp_type in ("frps", "frpc"):
+    # 必须显式指定实例类型,确保用正确的二进制启动
+    if instance_type:
+        frp_type = instance_type
         bin_path = resolve_binary(frp_type)
         if bin_path and os.path.isfile(config_path):
-            r = create_binary_instance(instance_name, frp_type, config_path, bin_path)
-            return r
+            return create_binary_instance(instance_name, frp_type, config_path, bin_path)
+        return {"success": False, "error": f"未找到 {frp_type} 二进制或配置文件"}
+    # 兼容旧调用:未指定类型时,从配置内容推断
+    try:
+        with open(config_path) as f:
+            content = f.read()
+        # frps 配置有 bindPort/frps.bindAddr;frpc 配置有 serverAddr/proxies
+        if "serverAddr" in content or "[[proxies]]" in content:
+            frp_type = "frpc"
+        else:
+            frp_type = "frps"
+    except OSError:
+        frp_type = "frps"
+    bin_path = resolve_binary(frp_type)
+    if bin_path and os.path.isfile(config_path):
+        return create_binary_instance(instance_name, frp_type, config_path, bin_path)
     return {"success": False, "error": "未找到 frp 二进制或配置文件"}
 
 
@@ -454,11 +474,16 @@ def stop_binary_instance(instance_name: str, config_path: str = None) -> dict:
     return {"success": False, "error": "停止失败"}
 
 
-def restart_binary_instance(instance_name: str, config_path: str = None) -> dict:
-    """重启 binary 实例。"""
+def restart_binary_instance(instance_name: str, config_path: str = None,
+                            instance_type: str = None) -> dict:
+    """重启 binary 实例。
+
+    instance_type: 'frps' 或 'frpc'。必须显式指定,否则会优先用 frps 二进制
+    启动所有实例,导致 frpc 配置被错误解析后崩溃。
+    """
     stop_binary_instance(instance_name, config_path)
     time.sleep(0.3)
-    return start_binary_instance(instance_name, config_path)
+    return start_binary_instance(instance_name, config_path, instance_type)
 
 
 def get_binary_logs(instance_name: str, lines: int = 200) -> str:

@@ -245,25 +245,40 @@ def api_create_instance(ctx):
     if conflict:
         return 400, {"error": f"端口冲突: {conflict}"}
 
-    # 生成配置文件
+    # 先创建数据库记录,得到 instance_id
     config_path = str(CONFIG_DIR / f"{name}.toml")
+    try:
+        instance_id = db.create_instance(name, instance_type, deploy_mode, config_path)
+    except ValueError as e:
+        return 409, {"error": str(e)}
+
+    # 把 frpc 的 proxies 数组写入数据库(便于后续单 proxy 启停)
+    if instance_type == "frpc":
+        proxies_data = config_data.get("proxies") or []
+        for p in proxies_data:
+            try:
+                db.create_proxy(instance_id, p)
+            except ValueError:
+                pass  # 重复名等忽略
+        # 移除 proxies 字段,避免生成 TOML 时重复处理
+        config_data = {k: v for k, v in config_data.items() if k != "proxies"}
+
+    # 生成配置文件(此时 config_data 已无 proxies,数据库里已存)
     try:
         if instance_type == "frps":
             cfg = config_gen.FrpsConfig(**_pick_frps_fields(config_data))
         else:
-            cfg = config_gen.FrpcConfig(**_pick_frpc_fields(config_data))
+            fields = _pick_frpc_fields(config_data)
+            fields["proxies"] = _build_enabled_proxies(instance_id)
+            cfg = config_gen.FrpcConfig(**fields)
         with open(config_path, "w") as f:
             f.write(cfg.to_toml())
     except Exception as e:
-        return 400, {"error": f"配置生成失败: {e}"}
-
-    # 创建数据库记录
-    try:
-        instance_id = db.create_instance(name, instance_type, deploy_mode, config_path)
-    except ValueError as e:
+        # 清理:删除数据库记录 + 配置
+        db.delete_instance(instance_id)
         if os.path.exists(config_path):
             os.remove(config_path)
-        return 409, {"error": str(e)}
+        return 400, {"error": f"配置生成失败: {e}"}
 
     result = {"instance_id": instance_id, "config_path": config_path}
 
@@ -301,7 +316,9 @@ def api_update_instance(ctx):
             if inst["type"] == "frps":
                 cfg = config_gen.FrpsConfig(**_pick_frps_fields(config_data))
             else:
-                cfg = config_gen.FrpcConfig(**_pick_frpc_fields(config_data))
+                fields = _pick_frpc_fields(config_data)
+                fields["proxies"] = _build_enabled_proxies(instance_id)
+                cfg = config_gen.FrpcConfig(**fields)
             with open(inst["config_path"], "w") as f:
                 f.write(cfg.to_toml())
     except Exception as e:
@@ -312,11 +329,304 @@ def api_update_instance(ctx):
     result = {"success": True}
     if restart:
         if inst["deploy_mode"] == "binary":
-            restart_result = frp_ops.restart_binary_instance(inst["name"], inst["config_path"])
+            restart_result = _restart_frpc_instance(inst)
         else:
             restart_result = frp_ops.restart_instance(inst["name"])
         result["restart"] = restart_result
     return 200, result
+
+
+# ============ Proxy (代理规则) API ============
+# 单 proxy 启停:改 enabled 字段 + 重新生成 TOML + 重启实例。
+# 因为 frp v0.61.1 不支持运行时启停单个 proxy,必须改配置重启。
+
+def _proxy_row_to_config_proxy(p):
+    """把数据库 proxy 行(dict)转成 config_gen.Proxy 对象。
+
+    统一规范化字段:local_ip 默认 127.0.0.1,local_port 强制 int,
+    列表字段默认 [],字典字段默认 {}。
+    """
+    return config_gen.Proxy(
+        name=p.get("name"),
+        type=p.get("type") or "tcp",
+        local_ip=p.get("local_ip") or "127.0.0.1",
+        local_port=int(p.get("local_port") or 0),
+        remote_port=p.get("remote_port"),
+        subdomain=p.get("subdomain"),
+        custom_domains=p.get("custom_domains") or [],
+        secret_key=p.get("secret_key"),
+        host_header_rewrite=p.get("host_header_rewrite"),
+        locations=p.get("locations") or [],
+        http_user=p.get("http_user"),
+        http_password=p.get("http_password"),
+        plugin_name=p.get("plugin_name"),
+        plugin_config=p.get("plugin_config"),
+        plugin_local_addr=p.get("plugin_local_addr"),
+        request_headers=p.get("request_headers") or {},
+        response_headers=p.get("response_headers") or {},
+        metadatas=p.get("metadatas") or {},
+        load_balancer_group=p.get("load_balancer_group"),
+        load_balancer_group_key=p.get("load_balancer_group_key"),
+        transport_bandwidth_limit=p.get("transport_bandwidth_limit"),
+        transport_use_encryption=p.get("transport_use_encryption"),
+        transport_use_compression=p.get("transport_use_compression"),
+    )
+
+
+def _build_enabled_proxies(instance_id):
+    """从数据库读启用的代理并转成 Proxy 对象列表。"""
+    rows = db.list_proxies(instance_id)
+    return [_proxy_row_to_config_proxy(p) for p in rows if p.get("enabled")]
+
+
+def _parse_frpc_base_fields(base_data):
+    """从 TOML 顶层 dict(base_data)提取 FrpcConfig 需要的字段(不含 proxies)。
+
+    base_data 是 tomllib 解析后的 TOML 顶层 dict,frpc 配置字段使用驼峰命名
+    (serverAddr、loginFailExit 等),此函数映射成 FrpcConfig 的 snake_case 字段名。
+    """
+    fields = {}
+    # 顶层字段
+    if "serverAddr" in base_data:
+        fields["server_addr"] = base_data["serverAddr"]
+    if "serverPort" in base_data:
+        fields["server_port"] = base_data["serverPort"]
+    if "user" in base_data:
+        fields["user"] = base_data["user"]
+    if "loginFailExit" in base_data:
+        fields["login_fail_exit"] = base_data["loginFailExit"]
+    # auth.*
+    auth = base_data.get("auth")
+    if isinstance(auth, dict):
+        if "method" in auth:
+            fields["auth_method"] = auth["method"]
+        if "token" in auth:
+            fields["auth_token"] = auth["token"]
+    # transport.*
+    transport = base_data.get("transport")
+    if isinstance(transport, dict):
+        if "tcpMux" in transport:
+            fields["transport_tcp_mux"] = transport["tcpMux"]
+        if "dialServerTimeout" in transport:
+            fields["transport_dial_server_timeout"] = transport["dialServerTimeout"]
+        if "poolCount" in transport:
+            fields["transport_pool_count"] = transport["poolCount"]
+        http2 = transport.get("http2")
+        if isinstance(http2, dict) and "enabled" in http2:
+            fields["transport_http2_enabled"] = http2["enabled"]
+        tls = transport.get("tls")
+        if isinstance(tls, dict):
+            for src, dst in [("enable", "transport_tls_enable"),
+                              ("serverName", "transport_tls_server_name"),
+                              ("skipVerify", "transport_tls_skip_verify"),
+                              ("caFile", "transport_tls_ca_file"),
+                              ("certFile", "transport_tls_cert_file"),
+                              ("keyFile", "transport_tls_key_file")]:
+                if src in tls:
+                    fields[dst] = tls[src]
+    # log.*
+    log = base_data.get("log")
+    if isinstance(log, dict):
+        if "to" in log:
+            fields["log_to"] = log["to"]
+        if "level" in log:
+            fields["log_level"] = log["level"]
+        if "maxDays" in log:
+            fields["log_max_days"] = log["maxDays"]
+    # webServer.*
+    web = base_data.get("webServer")
+    if isinstance(web, dict):
+        if "addr" in web:
+            fields["web_server_addr"] = web["addr"]
+        if "port" in web:
+            fields["web_server_port"] = web["port"]
+        if "user" in web:
+            fields["web_server_user"] = web["user"]
+        if "password" in web:
+            fields["web_server_password"] = web["password"]
+    return fields
+
+
+def _wait_for_port(port, host="127.0.0.1", timeout=10.0, interval=0.3):
+    """等待 TCP 端口就绪(用于自动恢复时等 frps 起来再启动 frpc)。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.3)
+        try:
+            if s.connect_ex((host, port)) == 0:
+                return True
+        finally:
+            s.close()
+        time.sleep(interval)
+    return False
+
+
+def _get_frpc_instance(instance_id):
+    """获取 frpc 实例;不存在或不是 frpc 时返回 (None, (status, error_body))。
+
+    返回 (inst, None) 表示成功,调用方继续用 inst。
+    返回 (None, (status, body)) 表示失败,调用方 `return status, body`。
+    """
+    inst = db.get_instance(instance_id)
+    if not inst:
+        return None, (404, {"error": "not found"})
+    if inst["type"] != "frpc":
+        return None, (400, {"error": "仅 frpc 实例支持代理规则"})
+    return inst, None
+
+
+def _restart_frpc_instance(inst):
+    """重启 frpc 实例进程(binary 模式)。"""
+    return frp_ops.restart_binary_instance(inst["name"], inst["config_path"], inst["type"])
+
+
+def _regenerate_frpc_config(instance_id):
+    """从数据库重新生成 frpc TOML 配置文件。返回 (config_path, success, error)。
+
+    流程:读取现有 TOML 基础配置 → 从数据库读启用的代理 → 重新组装并写回。
+    """
+    inst, err = _get_frpc_instance(instance_id)
+    if err:
+        return None, False, err[1]["error"]
+
+    config_path = inst["config_path"]
+
+    # 读取现有 TOML 的基础配置(非 proxies 部分)
+    existing_data = {}
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "rb") as f:
+                existing_data = tomllib.load(f)
+        except Exception:
+            existing_data = {}
+
+    base_data = {k: v for k, v in existing_data.items() if k != "proxies"}
+    fields = _parse_frpc_base_fields(base_data)
+    fields["proxies"] = _build_enabled_proxies(instance_id)
+
+    try:
+        cfg = config_gen.FrpcConfig(**fields)
+        with open(config_path, "w") as f:
+            f.write(cfg.to_toml())
+        db.update_instance(instance_id, {"updated_at": int(time.time())})
+        return config_path, True, None
+    except Exception as e:
+        return config_path, False, str(e)
+
+
+@app.get("/api/instances/:id/proxies")
+def api_list_proxies(ctx):
+    """列出实例下所有代理规则。"""
+    instance_id = int(ctx["params"]["id"])
+    inst = db.get_instance(instance_id)
+    if not inst:
+        return 404, {"error": "not found"}
+    proxies = db.list_proxies(instance_id)
+    return 200, {"proxies": proxies}
+
+
+@app.post("/api/instances/:id/proxies")
+def api_create_proxy(ctx):
+    """新建代理规则(默认启用,会重新生成配置 + 重启实例)。"""
+    instance_id = int(ctx["params"]["id"])
+    inst, err = _get_frpc_instance(instance_id)
+    if err:
+        return err
+
+    proxy_data = ctx["body"] or {}
+    try:
+        proxy_id = db.create_proxy(instance_id, proxy_data)
+    except ValueError as e:
+        return 400, {"error": str(e)}
+
+    _, ok, reg_err = _regenerate_frpc_config(instance_id)
+    if not ok:
+        return 400, {"error": f"配置生成失败: {reg_err}", "proxy_id": proxy_id}
+
+    restart_result = _restart_frpc_instance(inst)
+    return 201, {"proxy_id": proxy_id, "restart": restart_result}
+
+
+@app.put("/api/instances/:id/proxies/:pid")
+def api_update_proxy(ctx):
+    """更新代理规则(会重新生成配置 + 重启实例)。"""
+    instance_id = int(ctx["params"]["id"])
+    proxy_id = int(ctx["params"]["pid"])
+    inst, err = _get_frpc_instance(instance_id)
+    if err:
+        return err
+
+    proxy = db.get_proxy(proxy_id)
+    if not proxy or proxy["instance_id"] != instance_id:
+        return 404, {"error": "代理不存在"}
+
+    proxy_data = ctx["body"] or {}
+    try:
+        db.update_proxy(proxy_id, proxy_data)
+    except ValueError as e:
+        return 400, {"error": str(e)}
+
+    _, ok, reg_err = _regenerate_frpc_config(instance_id)
+    if not ok:
+        return 400, {"error": f"配置生成失败: {reg_err}"}
+
+    restart_result = _restart_frpc_instance(inst)
+    return 200, {"success": True, "restart": restart_result}
+
+
+@app.post("/api/instances/:id/proxies/:pid/toggle")
+def api_toggle_proxy(ctx):
+    """启停单个代理规则(会重新生成配置 + 重启实例)。"""
+    instance_id = int(ctx["params"]["id"])
+    proxy_id = int(ctx["params"]["pid"])
+    inst, err = _get_frpc_instance(instance_id)
+    if err:
+        return err
+
+    proxy = db.get_proxy(proxy_id)
+    if not proxy or proxy["instance_id"] != instance_id:
+        return 404, {"error": "代理不存在"}
+
+    body = ctx["body"] or {}
+    enabled = bool(body.get("enabled", not proxy.get("enabled")))
+
+    db.toggle_proxy(proxy_id, enabled)
+
+    _, ok, reg_err = _regenerate_frpc_config(instance_id)
+    if not ok:
+        return 400, {"error": f"配置生成失败: {reg_err}"}
+
+    restart_result = _restart_frpc_instance(inst)
+    return 200, {
+        "success": True,
+        "proxy_id": proxy_id,
+        "enabled": enabled,
+        "restart": restart_result,
+    }
+
+
+@app.delete("/api/instances/:id/proxies/:pid")
+def api_delete_proxy(ctx):
+    """删除代理规则(会重新生成配置 + 重启实例)。"""
+    instance_id = int(ctx["params"]["id"])
+    proxy_id = int(ctx["params"]["pid"])
+    inst, err = _get_frpc_instance(instance_id)
+    if err:
+        return err
+
+    proxy = db.get_proxy(proxy_id)
+    if not proxy or proxy["instance_id"] != instance_id:
+        return 404, {"error": "代理不存在"}
+
+    db.delete_proxy(proxy_id)
+
+    _, ok, reg_err = _regenerate_frpc_config(instance_id)
+    if not ok:
+        return 400, {"error": f"配置生成失败: {reg_err}"}
+
+    restart_result = _restart_frpc_instance(inst)
+    return 200, {"success": True, "restart": restart_result}
 
 
 @app.delete("/api/instances/:id")
@@ -337,6 +647,9 @@ def api_delete_instance(ctx):
             result["deleted"]["config"] = inst["config_path"]
     except Exception as e:
         result["config_error"] = str(e)
+    # 级联删除实例下所有代理规则
+    deleted_proxies = db.delete_proxies_by_instance(instance_id)
+    result["deleted"]["proxies"] = deleted_proxies
     if db.delete_instance(instance_id):
         result["deleted"]["db"] = instance_id
     return 200, result
@@ -348,7 +661,7 @@ def api_start_instance(ctx):
     if not inst:
         return 404, {"error": "not found"}
     if inst["deploy_mode"] == "binary":
-        return 200, frp_ops.start_binary_instance(inst["name"], inst["config_path"])
+        return 200, frp_ops.start_binary_instance(inst["name"], inst["config_path"], inst["type"])
     return 200, frp_ops.start_instance(inst["name"])
 
 
@@ -368,7 +681,7 @@ def api_restart_instance(ctx):
     if not inst:
         return 404, {"error": "not found"}
     if inst["deploy_mode"] == "binary":
-        return 200, frp_ops.restart_binary_instance(inst["name"], inst["config_path"])
+        return 200, _restart_frpc_instance(inst)
     return 200, frp_ops.restart_instance(inst["name"])
 
 
@@ -722,49 +1035,83 @@ def _pick_frpc_fields(data: dict) -> dict:
 
 def _auto_recover_instances():
     """启动时自动恢复所有 binary 模式的实例(容器重建后 frp 进程会丢失)。
-    
-    遍历数据库实例,对 deploy_mode='binary' 的实例:
-    - 检查进程是否还活着(PID 文件 + /proc/<pid>/stat 排除僵尸)
-    - 如果进程不在 → 自动重启
-    - 状态是动态查的,不需要写数据库
-    
-    这样容器重建后,frps/frpc 不需要手动重启。
+
+    按类型分两批:先启动 frps,等 frps 的 bindPort 就绪后再启动 frpc,
+    否则 frpc 因 loginFailExit=true 连不上 frps 会直接退出。
     """
     import sys
     def log(msg):
         print(msg, flush=True)
         sys.stdout.flush()
-    
+
     log("[*] 自动恢复检查开始...")
     try:
         instances = db.list_instances()
     except Exception as e:
         log(f"[!] 自动恢复: 读取实例失败: {e}")
-        return
+        return 0
+
     recovered = 0
-    for inst in instances:
-        if inst.get("deploy_mode") != "binary":
-            continue
+
+    def _recover_one(inst):
+        """恢复单个实例,返回是否成功启动。"""
         name = inst.get("name")
         config_path = inst.get("config_path")
         if not name or not config_path:
-            continue
+            return False
         try:
             status = frp_ops.get_binary_status(name, config_path)
             if not status.get("running", False):
                 log(f"[*] 自动恢复实例: {name} (进程丢失)")
-                result = frp_ops.start_binary_instance(name, config_path)
+                result = frp_ops.start_binary_instance(name, config_path, inst.get("type"))
                 if result.get("success"):
                     log(f"[*] 实例 {name} 已启动, pid={result.get('pid')}")
-                    recovered += 1
-                else:
-                    log(f"[!] 启动 {name} 失败: {result.get('error')}")
+                    return True
+                log(f"[!] 启动 {name} 失败: {result.get('error')}")
         except Exception as e:
-            log(f"[!] 自动恢复 {name} 失败: {e}")
-    if recovered:
-        log(f"[*] 自动恢复完成: {recovered} 个实例已重启")
-    else:
-        log(f"[*] 自动恢复检查完成: 0 个实例需要恢复")
+            log(f"[!] 恢复 {name} 异常: {e}")
+        return False
+
+    # 第一批:启动所有 frps
+    for inst in instances:
+        if inst.get("type") == "frps":
+            if _recover_one(inst):
+                recovered += 1
+
+    # 等 frps 端口就绪(只对有 frpc 实例时才需要等)
+    if any(i.get("type") == "frpc" for i in instances):
+        frps_bind_port = _get_first_frps_bind_port(instances)
+        if frps_bind_port:
+            log(f"[*] 等待 frps 端口 {frps_bind_port} 就绪...")
+            if _wait_for_port(frps_bind_port, timeout=10.0):
+                log(f"[*] frps 端口 {frps_bind_port} 已就绪")
+            else:
+                log(f"[!] 等待 frps 端口 {frps_bind_port} 超时(10s),仍尝试启动 frpc")
+
+    # 第二批:启动所有 frpc
+    for inst in instances:
+        if inst.get("type") == "frpc":
+            if _recover_one(inst):
+                recovered += 1
+
+    log(f"[*] 自动恢复完成: {recovered} 个实例已重启")
+    return recovered
+
+
+def _get_first_frps_bind_port(instances):
+    """从 frps 实例配置里读取第一个 bindPort(用于自动恢复时等端口就绪)。"""
+    for inst in instances:
+        if inst.get("type") != "frps":
+            continue
+        try:
+            with open(inst["config_path"], "rb") as f:
+                cfg = tomllib.load(f)
+            port = cfg.get("bindPort") or cfg.get("bind_port")
+            if isinstance(port, int):
+                return port
+        except Exception:
+            continue
+    return None
 
 
 def main():
