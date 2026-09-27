@@ -20,8 +20,8 @@ VERSION = "1.1.0"
 DESCRIPTION = "frp 可视化管理面板 | 零依赖 | Docker/Binary 双模式 | 中文友好"
 
 # 发布信息
-AUTHOR = "kingc0000"
-AUTHOR_URL = "https://github.com/kingc0000/easy-frp-manager"
+AUTHOR = "anonymous"
+AUTHOR_URL = "https://github.com/anonymous/easy-frp-manager"
 LICENSE = "MIT"
 DOCKER_HUB = "mejeor/easy-frp-manager"
 

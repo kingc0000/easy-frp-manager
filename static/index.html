@@ -565,7 +565,7 @@ function renderConfigFields() {
   if (type === 'frps') {
     html = `
       <div class="bg-blue-900/20 border border-blue-700/40 rounded p-3 mb-4 text-sm text-blue-300">
-        <b>这是什么?</b> frps 是服务端,跑在有公网 IP 的机器上(比如腾讯云)。
+        <b>这是什么?</b> frps 是服务端,跑在有公网 IP 的机器上(比如云主机)。
         它监听一个端口,等待 NAS 上的 frpc 连过来,然后把公网请求转发给 NAS。
         <br><br>
         <b>简单理解:</b> frps = 一个"中转站",帮没有公网 IP 的 NAS 把服务暴露到公网。
@@ -608,9 +608,9 @@ function renderConfigFields() {
     html = `
       <div class="bg-green-900/20 border border-green-700/40 rounded p-3 mb-4 text-sm text-green-300">
         <b>这是什么?</b> frpc 是客户端,跑在 NAS 上(没有公网 IP 的机器)。
-        它主动连接腾讯云上的 frps,建立隧道,把 NAS 上的服务暴露到公网。
+        它主动连接云主机上的 frps,建立隧道,把 NAS 上的服务暴露到公网。
         <br><br>
-        <b>简单理解:</b> frpc = NAS 上的"联络员",跟腾讯云的 frps 说"我有个服务在 8080 端口,帮我转发"。
+        <b>简单理解:</b> frpc = NAS 上的"联络员",跟云主机上的 frps 说"我有个服务在 8080 端口,帮我转发"。
       </div>
       <h4 class="font-medium text-green-400 mb-3">客户端配置 (frpc)</h4>
       <div class="border border-gray-700 rounded p-3 mb-3">
@@ -618,7 +618,7 @@ function renderConfigFields() {
           <span class="text-sm font-medium">① 连接到哪台服务端?</span>
           <button type="button" onclick="addServer()" class="btn-ghost text-xs">+ 添加</button>
         </div>
-        <p class="text-xs text-gray-500 mb-3">填腾讯云 frps 的地址和端口(跟 frps 配置里的一致)</p>
+        <p class="text-xs text-gray-500 mb-3">填云主机 frps 的地址和端口(跟 frps 配置里的一致)</p>
         <div id="servers-section" class="space-y-2"></div>
       </div>
       <div class="border border-gray-700 rounded p-3">
@@ -716,9 +716,9 @@ function renderProxyRow(p, i) {
         </div>
       </div>
       ${!isHttp ? `<div class="mt-2">
-        <label class="block text-xs text-gray-500 mb-1">腾讯云上开放的端口 (remotePort)</label>
+        <label class="block text-xs text-gray-500 mb-1">云主机上开放的端口 (remotePort)</label>
         <input type="number" value="${p.remote_port||''}" data-field="remote_port" class="input">
-        <p class="text-xs text-gray-600 mt-1">访问者通过 <code>nas.235300.xyz:这个端口</code> 到达 NAS。在 2000-2050 内选,别跟已用的冲突</p>
+        <p class="text-xs text-gray-600 mt-1">访问者通过 <code>example.com:这个端口</code> 到达 NAS。在 2000-2050 内选,别跟已用的冲突</p>
       </div>` : ''}
       ${isHttp ? `<div class="mt-2">
         <label class="block text-xs text-gray-500 mb-1">域名 (逗号分隔)</label>
@@ -1235,6 +1235,12 @@ function renderProxyList(instanceId, proxies) {
     const toggleBtn = enabled
       ? `<button class="btn-ghost text-xs text-yellow-400" onclick="toggleProxy(${instanceId}, ${p.id}, false)">停止</button>`
       : `<button class="btn-ghost text-xs text-green-400" onclick="toggleProxy(${instanceId}, ${p.id}, true)">启动</button>`;
+    // 域名穿透指南按钮:仅在配置了域名的代理类型显示
+    const hasDomain = p.type === 'http' || p.type === 'https';
+    let nginxBtn = '';
+    if (hasDomain && p.custom_domains && p.custom_domains.length) {
+      nginxBtn = `<button class="btn-ghost text-xs text-cyan-400" onclick="showNginxGuideModal(${instanceId}, ${p.id})">🌐 域名穿透指南</button>`;
+    }
     let portInfo = '';
     let extraLine = '';
     if (p.type === 'tcp' || p.type === 'udp') {
@@ -1266,6 +1272,7 @@ function renderProxyList(instanceId, proxies) {
         </div>
       </div>
       <div class="space-x-1">
+        ${nginxBtn}
         ${toggleBtn}
         <button class="btn-ghost text-xs" onclick="showEditProxyModal(${instanceId}, ${p.id})">编辑</button>
         <button class="btn-ghost text-xs text-red-400" onclick="deleteProxy(${instanceId}, ${p.id}, '${escapeHtml(p.name)}')">删除</button>
@@ -1275,6 +1282,245 @@ function renderProxyList(instanceId, proxies) {
 
   html += `</div>`;
   content.innerHTML = html;
+}
+
+// ============ 域名穿透指南 ============
+let nginxGuideState = { instanceId: null, proxyId: null, proxy: null, instance: null };
+
+function showNginxGuideModal(instanceId, proxyId) {
+  // 先记录 ID(后续 render 里要用)
+  nginxGuideState = { instanceId, proxyId, proxy: null, instance: null };
+  // 加载代理详情
+  api(`/api/instances/${instanceId}/proxies`).then(data => {
+    const proxy = (data.proxies || []).find(p => p.id === proxyId);
+    if (!proxy) {
+      toast('代理不存在', 'error');
+      return;
+    }
+    // 加载实例详情(拿 IP)
+    api(`/api/instances/${instanceId}`).then(inst => {
+      nginxGuideState.proxy = proxy;
+      nginxGuideState.instance = inst;
+      renderNginxGuideModal(proxy, inst);
+    });
+  }).catch(e => {
+    if (e && e.authExpired) return;
+    toast(`加载失败: ${e.message}`, 'error');
+  });
+}
+
+function renderNginxGuideModal(proxy, inst) {
+  // 注意:nginxGuideState 已在 showNginxGuideModal 里赋好 instanceId/proxyId
+  // 这里只更新 proxy 和 instance
+  const domains = proxy.custom_domains || [];
+  const localPort = proxy.local_port || 80;
+  const localIp = proxy.local_ip || '127.0.0.1';
+  const serverIp = inst.ip || 'YOUR_SERVER_IP';
+  const defaultCertPath = `/etc/ssl/frpm/${domains[0] || 'example.com'}.crt`;
+  const defaultKeyPath = `/etc/ssl/frpm/${domains[0] || 'example.com'}.key`;
+
+  // 占位配置:先把 nginx 配置塞到变量,后面更新
+  const initialConfig = generateNginxConfigLive();
+
+  document.getElementById('modal-container').innerHTML = `
+    <div class="bg-gray-900 border border-gray-700 rounded-lg max-w-3xl w-[95%] max-h-[90vh] overflow-y-auto p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold">🌐 域名穿透指南</h3>
+        <button onclick="closeModal()" class="text-gray-400 hover:text-white text-xl">&times;</button>
+      </div>
+
+      <div class="mb-4 p-3 bg-gray-800 rounded">
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <div><span class="text-gray-400">代理:</span> <span class="font-mono">${escapeHtml(proxy.name)}</span></div>
+          <div><span class="text-gray-400">类型:</span> <span class="font-mono">${escapeHtml(proxy.type)}</span></div>
+          <div><span class="text-gray-400">域名:</span> <span class="font-mono text-cyan-400">${escapeHtml(domains.join(', ') || '未配置')}</span></div>
+          <div><span class="text-gray-400">本地端口:</span> <span class="font-mono">${localIp}:${localPort}</span></div>
+          <div><span class="text-gray-400">服务器IP:</span> <span class="font-mono">${escapeHtml(serverIp)}</span></div>
+          <div><span class="text-gray-400">目标地址:</span> <span class="font-mono text-green-400">${escapeHtml(domains[0] || 'example.com')}</span></div>
+        </div>
+      </div>
+
+      <!-- 步骤 1: DNS -->
+      <details class="mb-3 border border-gray-700 rounded" open>
+        <summary class="p-3 cursor-pointer font-medium text-cyan-400">① DNS 解析配置</summary>
+        <div class="p-3 pt-0 space-y-2 text-sm">
+          <ol class="list-decimal ml-6 space-y-1">
+            <li>登录 <a href="https://your-dns-provider.example.com/" target="_blank" class="text-blue-400 underline">DNS 服务商控制台</a></li>
+            <li>找到域名 <span class="font-mono text-green-400">${escapeHtml(domains[0] || 'example.com')}</span></li>
+            <li>点击「添加记录」</li>
+            <li>记录类型: <span class="font-mono bg-gray-800 px-1 rounded">A</span></li>
+            <li>主机记录: <span class="font-mono bg-gray-800 px-1 rounded">${escapeHtml((domains[0] || '').split('.')[0] || '')}</span></li>
+            <li>记录值: <span class="font-mono bg-gray-800 px-1 rounded">${escapeHtml(serverIp)}</span></li>
+            <li>点击「添加」,等待 5 分钟生效</li>
+          </ol>
+          <div class="p-2 bg-gray-800 rounded font-mono text-xs">
+            <div class="text-gray-400 mb-1"># 验证解析是否生效</div>
+            <div>dig ${escapeHtml(domains[0] || 'example.com')} A +short</div>
+          </div>
+        </div>
+      </details>
+
+      <!-- 步骤 2: TLS 证书 -->
+      <details class="mb-3 border border-gray-700 rounded">
+        <summary class="p-3 cursor-pointer font-medium text-cyan-400">② TLS 证书签发(acme.sh + DNS-01)</summary>
+        <div class="p-3 pt-0 space-y-2 text-sm">
+          <p class="text-gray-400">用 DNS-01 验证(不需要公网 80/443 端口),适合 frp 内网穿透场景。</p>
+          <div class="p-2 bg-gray-800 rounded font-mono text-xs">
+            <div class="text-gray-400 mb-1"># 1. 安装 acme.sh</div>
+            <div>curl https://get.acme.sh | sh</div>
+            <div class="mt-2 text-gray-400 mb-1"># 2. 配置 DNS 服务商(一次性)</div>
+            <div>acme.sh --set-dns dns_你的服务商</div>
+            <div>export CLOUD_SECRET_ID="<YOUR_CLOUD_SECRET_ID>"</div>
+            <div>export CLOUD_SECRET_KEY="<YOUR_C…KEY>"</div>
+            <div class="mt-2 text-gray-400 mb-1"># 3. 签发证书(用 DNS-01 验证)</div>
+            <div>acme.sh --issue --dns dns_你的服务商 -d ${escapeHtml(domains[0] || 'example.com')} --keylength ec-256</div>
+            <div class="mt-2 text-gray-400 mb-1"># 4. 安装到指定目录</div>
+            <div>mkdir -p /etc/ssl/frpm</div>
+            <div>acme.sh --install-cert -d ${escapeHtml(domains[0] || 'example.com')} \\</div>
+            <div>  --ecc --cert-file /etc/ssl/frpm/${escapeHtml(domains[0] || 'example.com')}.crt \\</div>
+            <div>  --key-file /etc/ssl/frpm/${escapeHtml(domains[0] || 'example.com')}.key \\</div>
+            <div>  --reloadcmd "nginx -s reload"</div>
+          </div>
+        </div>
+      </details>
+
+      <!-- 步骤 3: nginx 配置 -->
+      <details class="mb-3 border border-gray-700 rounded" open>
+        <summary class="p-3 cursor-pointer font-medium text-cyan-400">③ nginx 反向代理配置</summary>
+        <div class="p-3 pt-0 space-y-3 text-sm">
+          <!-- SSL 开关 + 证书路径 -->
+          <div class="flex items-center gap-3 p-2 bg-gray-800 rounded">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" id="nginx-ssl-toggle" checked onchange="updateNginxConfigPreview()" class="w-4 h-4">
+              <span>启用 HTTPS</span>
+            </label>
+            <div id="nginx-cert-fields" class="flex-1 grid grid-cols-2 gap-2">
+              <div>
+                <label class="block text-xs text-gray-400 mb-1">证书路径</label>
+                <input type="text" id="nginx-cert-path" value="${escapeHtml(defaultCertPath)}" oninput="updateNginxConfigPreview()" class="input text-xs">
+              </div>
+              <div>
+                <label class="block text-xs text-gray-400 mb-1">密钥路径</label>
+                <input type="text" id="nginx-key-path" value="${escapeHtml(defaultKeyPath)}" oninput="updateNginxConfigPreview()" class="input text-xs">
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs text-gray-400 mb-1">nginx 配置(可复制)</label>
+            <textarea id="nginx-config-preview" readonly class="input font-mono text-xs h-64 resize-none">${escapeHtml(initialConfig)}</textarea>
+          </div>
+
+          <div class="flex gap-2">
+            <button onclick="copyNginxConfig()" class="btn-primary text-xs flex-1">复制配置</button>
+            <button onclick="saveNginxConfigToContainer()" class="btn-primary text-xs flex-1 bg-green-600 hover:bg-green-700">💾 保存到容器 /data/frpm/nginx/</button>
+          </div>
+        </div>
+      </details>
+
+      <!-- 步骤 4: 验证 -->
+      <details class="mb-3 border border-gray-700 rounded">
+        <summary class="p-3 cursor-pointer font-medium text-cyan-400">④ 验证与部署</summary>
+        <div class="p-3 pt-0 space-y-2 text-sm">
+          <div class="p-2 bg-gray-800 rounded font-mono text-xs">
+            <div class="text-gray-400 mb-1"># 1. 从容器复制配置到宿主机 nginx 目录</div>
+            <div>docker cp frpm:/data/frpm/nginx/${escapeHtml(proxy.name.toLowerCase())}.conf /etc/nginx/conf.d/</div>
+            <div class="mt-2 text-gray-400 mb-1"># 2. 测试 nginx 配置</div>
+            <div>nginx -t</div>
+            <div class="mt-2 text-gray-400 mb-1"># 3. 重载 nginx</div>
+            <div>nginx -s reload</div>
+            <div class="mt-2 text-gray-400 mb-1"># 4. 测试访问</div>
+            <div>curl -I https://${escapeHtml(domains[0] || 'example.com')}</div>
+            <div>curl https://${escapeHtml(domains[0] || 'example.com')}/api/instances</div>
+          </div>
+        </div>
+      </details>
+    </div>
+  `;
+}
+
+function generateNginxConfigLive() {
+  const { proxy } = nginxGuideState;
+  if (!proxy) return '';
+  const ssl = document.getElementById('nginx-ssl-toggle')?.checked ?? true;
+  const certPath = document.getElementById('nginx-cert-path')?.value || '';
+  const keyPath = document.getElementById('nginx-key-path')?.value || '';
+  const domains = proxy.custom_domains || [];
+  const localPort = proxy.local_port || 80;
+  const localIp = proxy.local_ip || '127.0.0.1';
+
+  let cfg = `# Auto-generated by frpm - ${new Date().toLocaleString()}\n`;
+  cfg += `# 域名: ${domains.join(', ')}\n`;
+  cfg += `# 代理: ${proxy.name} (id=${proxy.id})\n\n`;
+  cfg += `map $http_upgrade $connection_upgrade {\n    default upgrade;\n    '' close;\n}\n\n`;
+  cfg += `server {\n`;
+  if (ssl) {
+    cfg += `    listen 80;\n    listen 443 ssl;\n`;
+    cfg += `    server_name ${domains.join(' ')};\n\n`;
+    cfg += `    ssl_certificate     ${certPath || '/etc/ssl/frpm/example.crt'};\n`;
+    cfg += `    ssl_certificate_key ${keyPath || '/etc/ssl/frpm/example.key'};\n`;
+    cfg += `    ssl_protocols TLSv1.2 TLSv1.3;\n    ssl_ciphers HIGH:!aNULL:!MD5;\n\n`;
+  } else {
+    cfg += `    listen 80;\n`;
+    cfg += `    server_name ${domains.join(' ')};\n\n`;
+  }
+  cfg += `    location / {\n`;
+  cfg += `        proxy_pass http://${localIp}:${localPort};\n`;
+  cfg += `        proxy_http_version 1.1;\n`;
+  cfg += `        proxy_set_header Host $host;\n`;
+  cfg += `        proxy_set_header X-Real-IP $remote_addr;\n`;
+  cfg += `        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n`;
+  cfg += `        proxy_set_header X-Forwarded-Proto $scheme;\n`;
+  cfg += `        proxy_set_header Upgrade $http_upgrade;\n`;
+  cfg += `        proxy_set_header Connection $connection_upgrade;\n`;
+  cfg += `    }\n}\n`;
+  return cfg;
+}
+
+function updateNginxConfigPreview() {
+  // SSL 开关切换时,显示/隐藏证书路径输入框
+  const sslChecked = document.getElementById('nginx-ssl-toggle')?.checked;
+  const certFields = document.getElementById('nginx-cert-fields');
+  if (certFields) {
+    certFields.style.display = sslChecked ? 'grid' : 'none';
+  }
+  // 更新配置预览
+  const preview = document.getElementById('nginx-config-preview');
+  if (preview) preview.value = generateNginxConfigLive();
+}
+
+function copyNginxConfig() {
+  const cfg = generateNginxConfigLive();
+  navigator.clipboard.writeText(cfg).then(() => {
+    toast('已复制到剪贴板', 'success');
+  }).catch(() => {
+    // fallback:用 textarea 选中
+    const ta = document.getElementById('nginx-config-preview');
+    ta.focus();
+    ta.select();
+    document.execCommand('copy');
+    toast('已复制到剪贴板', 'success');
+  });
+}
+
+async function saveNginxConfigToContainer() {
+  const { instanceId, proxyId } = nginxGuideState;
+  const ssl = document.getElementById('nginx-ssl-toggle')?.checked;
+  const certPath = document.getElementById('nginx-cert-path')?.value;
+  const keyPath = document.getElementById('nginx-key-path')?.value;
+
+  try {
+    const resp = await api(`/api/instances/${instanceId}/proxies/${proxyId}/nginx-conf`, {
+      method: 'POST',
+      body: JSON.stringify({ ssl, cert_path: certPath, key_path: keyPath, save: true })
+    });
+    if (resp.host_path) {
+      toast(`✅ 已保存到 ${resp.host_path}`, 'success');
+    }
+  } catch (e) {
+    if (e && e.authExpired) return;
+    toast(`保存失败: ${e.message}`, 'error');
+  }
 }
 
 // ============ 新增/编辑代理模态框 ============

@@ -6,7 +6,7 @@ FROM python:3.12-slim
 
 LABEL org.opencontainers.image.title="easy-frp-manager"
 LABEL org.opencontainers.image.description="frp 可视化管理面板 | 零依赖 | Docker/Binary 双模式"
-LABEL org.opencontainers.image.source="https://github.com/kingc0000/easy-frp-manager"
+LABEL org.opencontainers.image.source="https://github.com/anonymous/easy-frp-manager"
 LABEL org.opencontainers.image.licenses="MIT"
 
 WORKDIR /app
