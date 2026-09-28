@@ -192,6 +192,7 @@ class FRPMRequestHandler(BaseHTTPRequestHandler):
             return
 
         # === 认证检查(可被 auth.enabled 关闭)===
+        _session = {}  # 默认空(公开路径或未启用认证)
         auth_check = getattr(self.router, "auth_check", None)
         if auth_check and not is_public_path(path):
             # 提取 token
@@ -207,8 +208,8 @@ class FRPMRequestHandler(BaseHTTPRequestHandler):
                     if part.startswith("session="):
                         token = part[8:].strip()
                         break
-            session = auth_check(token)
-            if not session:
+            _session = auth_check(token)
+            if not _session:
                 # 未认证,返回 401 + 前端友好提示
                 body = json.dumps({
                     "error": "未登录或会话已过期",
@@ -250,6 +251,7 @@ class FRPMRequestHandler(BaseHTTPRequestHandler):
             "params": params,
             "headers": dict(self.headers),
             "method": method,
+            "session": _session,
         }
 
         # 调用 handler

@@ -102,6 +102,10 @@ function showLogin(message) {
   authToken = '';
   localStorage.removeItem('frpm_token');
   localStorage.removeItem('frpm_username');
+  // 重置登录表单(防止上次成功登录后按钮残留 disabled 状态)
+  const btn = document.getElementById('login-overlay').querySelector('button[type="submit"]');
+  if (btn) { btn.disabled = false; btn.textContent = '登录'; }
+  document.getElementById('login-password').value = '';
   const overlay = document.getElementById('login-overlay');
   if (overlay) {
     overlay.style.display = 'flex';
@@ -603,6 +607,39 @@ function renderConfigFields() {
           <p class="text-xs text-gray-500 mt-1">保持连接不断,默认 7200 秒(2 小时)</p>
         </div>
       </div>
+      <div class="mt-4 border border-gray-700 rounded p-3">
+        <div class="flex items-center justify-between mb-2">
+          <label class="font-medium text-sm flex items-center gap-2">
+            <input type="checkbox" id="ws-enable" onchange="toggleWsFields()" class="accent-blue-500">
+            📊 启用 Dashboard (webServer)
+          </label>
+        </div>
+        <p class="text-xs text-gray-500 mb-3">frps 内置管理面板,可看连接的 frpc 客户端和实时代理状态。<br>建议开启,否则面板上看不到实时连接信息</p>
+        <div id="ws-fields" class="hidden">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm text-gray-400 mb-1">面板地址</label>
+              <input type="text" name="web_server_addr" value="0.0.0.0" class="input">
+              <p class="text-xs text-gray-500 mt-1">固定 0.0.0.0</p>
+            </div>
+            <div>
+              <label class="block text-sm text-gray-400 mb-1">面板端口</label>
+              <input type="number" name="web_server_port" value="2010" min="1" max="65535" class="input">
+              <p class="text-xs text-gray-500 mt-1">建议跟 bindPort 不同(如 bindPort=2005 则填 2010)</p>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3 mt-3">
+            <div>
+              <label class="block text-sm text-gray-400 mb-1">面板用户名</label>
+              <input type="text" name="web_server_user" value="admin" class="input">
+            </div>
+            <div>
+              <label class="block text-sm text-gray-400 mb-1">面板密码</label>
+              <input type="password" name="web_server_password" value="" class="input" placeholder="留空则不设密码">
+            </div>
+          </div>
+        </div>
+      </div>
     `;
   } else {
     html = `
@@ -779,6 +816,14 @@ function onDeployChange(val) {
   newInstanceState.deploy_mode = val;
 }
 
+function toggleWsFields() {
+  const checkbox = document.getElementById('ws-enable');
+  const fields = document.getElementById('ws-fields');
+  if (fields) {
+    fields.classList.toggle('hidden', !checkbox.checked);
+  }
+}
+
 function generateToken(btn) {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   let token = '';
@@ -805,6 +850,18 @@ function collectFormData() {
     data.config.bind_port = parseInt(data.config.bind_port);
     data.config.transport_heartbeat_interval = parseInt(data.config.transport_heartbeat_interval);
     data.config.transport_heartbeat_ttl = parseInt(data.config.transport_heartbeat_ttl);
+    // webServer (Dashboard) - 仅当启用时收集
+    const wsEnable = document.getElementById('ws-enable');
+    if (wsEnable && wsEnable.checked) {
+      const wsAddr = form.querySelector('[name=web_server_addr]');
+      const wsPort = form.querySelector('[name=web_server_port]');
+      const wsUser = form.querySelector('[name=web_server_user]');
+      const wsPass = form.querySelector('[name=web_server_password]');
+      if (wsAddr) data.config.web_server_addr = wsAddr.value;
+      if (wsPort) data.config.web_server_port = parseInt(wsPort.value);
+      if (wsUser) data.config.web_server_user = wsUser.value;
+      if (wsPass && wsPass.value) data.config.web_server_password = wsPass.value;
+    }
   } else {
     // 直接从 DOM 收集 servers 和 proxies
     const servers = [];
@@ -1186,10 +1243,9 @@ async function toggleInstanceProxies(instanceId, linkEl) {
     // 展开
     row.style.display = 'table-row';
     if (arrow) arrow.textContent = '▲';
-    if (!expandedInstances[instanceId]) {
-      expandedInstances[instanceId] = true;
-      await loadInstanceProxies(instanceId);
-    }
+    expandedInstances[instanceId] = true;
+    // 总是重新加载,避免之前 renderInstances 重建 DOM 残留的"加载中..."占位
+    await loadInstanceProxies(instanceId);
   } else {
     // 收起
     row.style.display = 'none';

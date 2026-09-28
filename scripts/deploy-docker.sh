@@ -23,6 +23,7 @@ docker run -d \
   --name "$CONTAINER" \
   --network host \
   -v /data/frpm:/data/frpm \
+  -v /data/frpm-configs:/data/frpm-configs \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /usr/bin/docker:/usr/bin/docker:ro \
   -v /usr/lib/x86_64-linux-gnu/libonion.so:/lib/x86_64-linux-gnu/libonion.so:ro \
