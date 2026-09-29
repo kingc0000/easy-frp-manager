@@ -227,6 +227,11 @@ class FrpcConfig:
     user: Optional[str] = None
     login_fail_exit: bool = True
     transport_tcp_mux: Optional[bool] = True
+    # frpc 侧心跳间隔(秒):默认 30。frp 内置默认是 0(不发送心跳),
+    # 那样 frps 会等 heartbeatTimeout(默认 90)超时后掐断控制连接,
+    # 导致 frpc 周期性重注册、间隙期间请求报 no route found。
+    # 配上后 frpc 每 30 秒发一次心跳,frps 重置计时器,连接保持稳定。
+    transport_heartbeat_interval: Optional[int] = 30
     transport_dial_server_timeout: Optional[int] = None
     transport_pool_count: Optional[int] = None
     transport_http2_enabled: Optional[bool] = None
@@ -276,6 +281,8 @@ class FrpcConfig:
         # 传输
         if self.transport_tcp_mux is not None:
             lines.append(f'transport.tcpMux = {"true" if self.transport_tcp_mux else "false"}')
+        if self.transport_heartbeat_interval is not None:
+            lines.append(f'transport.heartbeatInterval = {self.transport_heartbeat_interval}')
         if self.transport_dial_server_timeout is not None:
             lines.append(f'transport.dialServerTimeout = {self.transport_dial_server_timeout}')
         if self.transport_pool_count is not None:

@@ -661,9 +661,26 @@ function renderConfigFields() {
         <p class="text-xs text-gray-500 mb-3">填云主机 frps 的地址和端口(跟 frps 配置里的一致)</p>
         <div id="servers-section" class="space-y-2"></div>
       </div>
+      <div class="border border-gray-700 rounded p-3 mb-3">
+        <span class="text-sm font-medium">② 心跳保活</span>
+        <p class="text-xs text-gray-500 mb-2 mt-1">控制连接多久发一次心跳,防止被服务端超时掐断</p>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">心跳间隔 (秒)</label>
+            <input type="number" name="transport_heartbeat_interval" value="30" min="10" class="input" data-field="transport_heartbeat_interval">
+            <p class="text-xs text-gray-500 mt-1">每 30 秒发一次心跳,保持长连接不断。填 0 表示不发心跳(会周期性断线)</p>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">TCP 复用</label>
+            <input type="checkbox" name="transport_tcp_mux" checked class="mt-1" data-field="transport_tcp_mux">
+            <p class="text-xs text-gray-500 mt-1">多个代理共用一条连接,更省资源。一般保持开启</p>
+          </div>
+        </div>
+        <p class="text-xs text-gray-400 mt-2">💡 如果批量上传时偶发"网络连接异常",通常是心跳间隔没配或服务端超时太短,把这里设成 30 秒可解决</p>
+      </div>
       <div class="border border-gray-700 rounded p-3">
         <div class="flex items-center justify-between mb-2">
-          <span class="text-sm font-medium">② 要穿透哪些服务?</span>
+          <span class="text-sm font-medium">③ 要穿透哪些服务?</span>
           <button type="button" onclick="addProxy()" class="btn-ghost text-xs">+ 添加</button>
         </div>
         <p class="text-xs text-gray-500 mb-3">每条规则 = 把 NAS 上的一个端口,映射到公网上的一个端口</p>
@@ -866,6 +883,11 @@ function collectFormData() {
       if (wsPass && wsPass.value) data.config.web_server_password = wsPass.value;
     }
   } else {
+    // frpc:传输配置(心跳间隔/TCP复用)在顶层表单,直接按 name 收集
+    const hbInterval = form.querySelector('[name=transport_heartbeat_interval]');
+    if (hbInterval) data.config.transport_heartbeat_interval = parseInt(hbInterval.value) || 0;
+    const tcpMux = form.querySelector('[name=transport_tcp_mux]');
+    if (tcpMux) data.config.transport_tcp_mux = tcpMux.checked;
     // 直接从 DOM 收集 servers 和 proxies
     const servers = [];
     document.querySelectorAll('[id^="server-"]').forEach(el => {

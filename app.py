@@ -1060,16 +1060,19 @@ def _pick_frpc_fields(data: dict) -> dict:
     做向后兼容:老前端用 `servers` 数组,后端只支持单 server。
     """
     # 别名映射
+    # 注意: transport_heartbeat_interval 是 frpc 的合法字段,不在 alias_map 里,
+    # 直接走下方 valid 集合过滤。历史遗留曾把它映射到 None 丢弃,导致 frpc 不发心跳、
+    # 控制连接被 frps 每 90 秒超时掐断,批量上传间歇报"网络连接异常"。
     alias_map = {
-        'transport_heartbeat_interval': None,  # 新版移除
-        'transport_heartbeat_ttl': None,       # 新版移除
+        'transport_heartbeat_ttl': 'transport_heartbeat_interval',
         'transport_connect_timeout': 'transport_dial_server_timeout',
         'http2_enabled': 'transport_http2_enabled',
         'allow_arbitrary_ports': None,
     }
+
     valid = {"server_addr", "server_port", "auth_method", "auth_token", "user",
-             "login_fail_exit", "transport_tcp_mux", "transport_dial_server_timeout",
-             "transport_pool_count", "transport_http2_enabled",
+             "login_fail_exit", "transport_tcp_mux", "transport_heartbeat_interval",
+             "transport_dial_server_timeout", "transport_pool_count", "transport_http2_enabled",
              "transport_tls_enable", "transport_tls_server_name",
              "transport_tls_skip_verify", "transport_tls_ca_file",
              "transport_tls_cert_file", "transport_tls_key_file",
