@@ -17,6 +17,9 @@
   .btn-ghost:hover { background: #1f2937; }
   .input { background: #0b1220; border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.6rem; border-radius: 0.25rem; width: 100%; }
   .input:focus { outline: none; border-color: var(--accent); }
+  /* nginx 配置预览框:用纯 CSS 而非 Tailwind 工具类(本地打包版不扫描 h-[44rem] 这类任意值) */
+  .nginx-modal { max-height: 92vh; overflow-y: auto; }
+  .nginx-preview-box { height: 22rem; min-height: 14rem; resize: vertical; overflow: auto; }
   .badge { padding: 0.15rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; }
   .badge-green { background: #065f46; color: #6ee7b7; }
   .badge-red { background: #7f1d1d; color: #fca5a5; }
@@ -990,17 +993,26 @@ function renderFrpsStatusPanel(id) {
   if (proxies.length === 0) {
     proxiesHtml = `<div class="text-center text-gray-500 py-6">无活跃代理(没有 frpc 连上来)</div>`;
   } else {
-    const rows = proxies.map(p => {
+    const rows = proxies.map((p, idx) => {
       const name = p.name || '-';
       const ptype = p._type || '-';
       const conf = p.conf || {};
-      const remote = conf.remotePort || conf.bindAddr || conf.subdomain || conf.group || '-';
-      const local = conf.localIP || '-';
+      // 域名: http/https 代理用 customDomains, 其他用 subdomain
+      const domains = conf.customDomains || (conf.subdomain ? [conf.subdomain] : []);
+      // frps API 对 http/https 代理不返回 localPort, 只对 tcp/udp 返回
+      const localPort = conf.localPort != null ? conf.localPort : null;
+      const remote = conf.remotePort || conf.bindAddr || (domains.length ? domains.join(', ') : '') || conf.group || '-';
+      const local = localPort != null ? `${conf.localIP || '-'}:${localPort}` : (conf.localIP || '-');
       const ver = p.clientVersion || '-';
       const status = p.status === 'online' ? '<span class="badge badge-green">在线</span>' : '<span class="badge badge-red">离线</span>';
       const conns = p.curConns || 0;
       const tIn = fmtBytes(p.todayTrafficIn);
       const tOut = fmtBytes(p.todayTrafficOut);
+      // 仅 http/https 且配了域名的代理,在 frps 侧提供 nginx 配置生成
+      const hasDomains = domains && domains.length > 0;
+      const nginxBtn = (hasDomains && ['http', 'https'].includes(ptype))
+        ? `<button class="btn-ghost text-xs text-cyan-400" onclick="showNginxConfigForFrpsProxy(${id}, ${idx})">🌐 nginx 配置</button>`
+        : '<span class="text-gray-600 text-xs">—</span>';
       return `<tr>
         <td class="font-medium">${escapeHtml(name)}</td>
         <td><span class="badge badge-blue">${escapeHtml(ptype)}</span></td>
@@ -1010,6 +1022,7 @@ function renderFrpsStatusPanel(id) {
         <td>${conns}</td>
         <td>${escapeHtml(ver)}</td>
         <td><code>${escapeHtml(tIn)} / ${escapeHtml(tOut)}</code></td>
+        <td>${nginxBtn}</td>
       </tr>`;
     }).join('');
     proxiesHtml = `<div class="overflow-x-auto">
@@ -1017,12 +1030,13 @@ function renderFrpsStatusPanel(id) {
       <thead><tr class="text-left text-gray-400 border-b border-gray-700">
         <th class="py-2 pr-2">代理名</th>
         <th class="py-2 pr-2">类型</th>
-        <th class="py-2 pr-2">公网端口</th>
-        <th class="py-2 pr-2">本地IP</th>
+        <th class="py-2 pr-2">域名/端口</th>
+        <th class="py-2 pr-2">本地地址</th>
         <th class="py-2 pr-2">状态</th>
         <th class="py-2 pr-2">并发</th>
         <th class="py-2 pr-2">版本</th>
         <th class="py-2 pr-2">今日流量(入/出)</th>
+        <th class="py-2 pr-2">nginx 配置</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
@@ -1295,7 +1309,8 @@ function renderProxyList(instanceId, proxies) {
     const hasDomain = p.type === 'http' || p.type === 'https';
     let nginxBtn = '';
     if (hasDomain && p.custom_domains && p.custom_domains.length) {
-      nginxBtn = `<button class="btn-ghost text-xs text-cyan-400" onclick="showNginxGuideModal(${instanceId}, ${p.id})">🌐 域名穿透指南</button>`;
+      // nginx 配置指南已迁移到 frps 实例详情页的代理列表(frpc 侧代理无法直接部署 nginx)
+      nginxBtn = '';
     }
     let portInfo = '';
     let extraLine = '';
@@ -1343,48 +1358,54 @@ function renderProxyList(instanceId, proxies) {
 // ============ 域名穿透指南 ============
 let nginxGuideState = { instanceId: null, proxyId: null, proxy: null, instance: null };
 
-function showNginxGuideModal(instanceId, proxyId) {
-  // 先记录 ID(后续 render 里要用)
-  nginxGuideState = { instanceId, proxyId, proxy: null, instance: null, vhostPort: null };
-  // 三个请求并行: 代理详情 + 实例详情 + frps 配置(取 vhostHTTPPort)
-  Promise.all([
-    api(`/api/instances/${instanceId}/proxies`),
-    api(`/api/instances/${instanceId}`),
-    api(`/api/instances`),
-  ]).then(async ([proxiesResp, inst, allInst]) => {
-    const proxy = (proxiesResp.proxies || []).find(p => p.id === proxyId);
-    if (!proxy) {
-      toast('代理不存在', 'error');
-      return;
-    }
-    nginxGuideState.proxy = proxy;
-    nginxGuideState.instance = inst;
-    // 找 frps 实例,解析其 vhostHTTPPort
-    const frpsInst = (allInst || []).find(i => i.type === 'frps');
-    if (frpsInst) {
-      const frpsDetail = await api(`/api/instances/${frpsInst.id}`);
-      nginxGuideState.vhostPort = parseVhostPort(frpsDetail.config_content || '');
-    }
-    renderNginxGuideModal(proxy, inst);
-  }).catch(e => {
-    if (e && e.authExpired) return;
-    toast(`加载失败: ${e.message}`, 'error');
-  });
+function showNginxConfigForFrpsProxy(instanceId, proxyIndex) {
+  // 从 frps 实时状态里取指定索引的代理(nginx 配置指南的入口在 frps 详情页代理列表)
+  const proxies = (frpsStatusData && frpsStatusData.proxies) || [];
+  const p = proxies[proxyIndex];
+  if (!p) {
+    toast('未找到该代理,请先刷新实时状态', 'error');
+    return;
+  }
+  const conf = p.conf || {};
+  const domains = conf.customDomains || (conf.subdomain ? [conf.subdomain] : []);
+  if (!domains.length) {
+    toast('该代理未配置域名', 'error');
+    return;
+  }
+  // 构造 frpm 代理结构(兼容 generateNginxConfigLive)
+  nginxGuideState = {
+    instanceId,
+    vhostPort: parseVhostPortFromConfig(),
+    proxy: {
+      name: p.name || 'proxy',
+      type: p._type || 'http',
+      id: '-',
+      custom_domains: domains,
+      local_ip: conf.localIP || '127.0.0.1',
+      local_port: conf.localPort || 80,
+    },
+    instance: null,
+  };
+  renderNginxGuideModal(nginxGuideState.proxy);
 }
 
-// 从 frps 配置文本解析 vhostHTTPPort(形如 vhostHTTPPort = 2006)
-function parseVhostPort(configText) {
-  const m = (configText || '').match(/vhostHTTPPort\s*=\s*(\d+)/);
+// 从 frps 实例配置里解析 vhostHTTPPort(当前详情页的 frps 实例)
+function parseVhostPortFromConfig() {
+  if (!detailInstance || !detailInstance.config_content) return null;
+  const m = detailInstance.config_content.match(/vhostHTTPPort\s*=\s*(\d+)/);
   return m ? parseInt(m[1], 10) : null;
 }
 
-function renderNginxGuideModal(proxy, inst) {
-  // 注意:nginxGuideState 已在 showNginxGuideModal 里赋好 instanceId/proxyId
-  // 这里只更新 proxy 和 instance
+// frps 对 http/https 代理不返回 localPort, 此时不显示端口避免误导
+function frpsProxyBackendText(proxy) {
+  const ip = proxy.local_ip || '127.0.0.1';
+  const port = proxy.local_port;
+  return (port != null && port !== '' && port !== 0) ? `${ip}:${port}` : ip;
+}
+
+function renderNginxGuideModal(proxy) {
   const domains = proxy.custom_domains || [];
-  const localPort = proxy.local_port || 80;
-  const localIp = proxy.local_ip || '127.0.0.1';
-  const serverIp = inst.ip || 'YOUR_SERVER_IP';
+  const serverIp = nginxGuideState.instance?.ip || '';
   const defaultCertPath = `/etc/ssl/frpm/${domains[0] || 'example.com'}.crt`;
   const defaultKeyPath = `/etc/ssl/frpm/${domains[0] || 'example.com'}.key`;
 
@@ -1392,9 +1413,9 @@ function renderNginxGuideModal(proxy, inst) {
   const initialConfig = generateNginxConfigLive();
 
   document.getElementById('modal-container').innerHTML = `
-    <div class="bg-gray-900 border border-gray-700 rounded-lg max-w-3xl w-[95%] max-h-[90vh] overflow-y-auto p-6">
+    <div class="bg-gray-900 border border-gray-700 rounded-lg max-w-3xl w-[95%] p-6 nginx-modal">
       <div class="flex items-center justify-between mb-4">
-        <h3 class="text-lg font-semibold">🌐 域名穿透指南</h3>
+        <h3 class="text-lg font-semibold">🌐 nginx 配置(复制粘贴到 frps 主机)</h3>
         <button onclick="closeModal()" class="text-gray-400 hover:text-white text-xl">&times;</button>
       </div>
 
@@ -1403,68 +1424,22 @@ function renderNginxGuideModal(proxy, inst) {
           <div><span class="text-gray-400">代理:</span> <span class="font-mono">${escapeHtml(proxy.name)}</span></div>
           <div><span class="text-gray-400">类型:</span> <span class="font-mono">${escapeHtml(proxy.type)}</span></div>
           <div><span class="text-gray-400">域名:</span> <span class="font-mono text-cyan-400">${escapeHtml(domains.join(', ') || '未配置')}</span></div>
-          <div><span class="text-gray-400">本地端口:</span> <span class="font-mono">${localIp}:${localPort}</span></div>
-          <div><span class="text-gray-400">服务器IP:</span> <span class="font-mono">${escapeHtml(serverIp)}</span></div>
-          <div><span class="text-gray-400">目标地址:</span> <span class="font-mono text-green-400">${escapeHtml(domains[0] || 'example.com')}</span></div>
+          <div><span class="text-gray-400">frpc 后端:</span> <span class="font-mono">${escapeHtml(frpsProxyBackendText(proxy))}</span></div>
         </div>
       </div>
 
-      <!-- 步骤 1: DNS -->
+      <!-- 步骤 1: nginx 配置 -->
       <details class="mb-3 border border-gray-700 rounded" open>
-        <summary class="p-3 cursor-pointer font-medium text-cyan-400">① DNS 解析配置</summary>
-        <div class="p-3 pt-0 space-y-2 text-sm">
-          <ol class="list-decimal ml-6 space-y-1">
-            <li>登录 <a href="https://your-dns-provider.example.com/" target="_blank" class="text-blue-400 underline">DNS 服务商控制台</a></li>
-            <li>找到域名 <span class="font-mono text-green-400">${escapeHtml(domains[0] || 'example.com')}</span></li>
-            <li>点击「添加记录」</li>
-            <li>记录类型: <span class="font-mono bg-gray-800 px-1 rounded">A</span></li>
-            <li>主机记录: <span class="font-mono bg-gray-800 px-1 rounded">${escapeHtml((domains[0] || '').split('.')[0] || '')}</span></li>
-            <li>记录值: <span class="font-mono bg-gray-800 px-1 rounded">${escapeHtml(serverIp)}</span></li>
-            <li>点击「添加」,等待 5 分钟生效</li>
-          </ol>
-          <div class="p-2 bg-gray-800 rounded font-mono text-xs">
-            <div class="text-gray-400 mb-1"># 验证解析是否生效</div>
-            <div>dig ${escapeHtml(domains[0] || 'example.com')} A +short</div>
-          </div>
-        </div>
-      </details>
-
-      <!-- 步骤 2: TLS 证书 -->
-      <details class="mb-3 border border-gray-700 rounded">
-        <summary class="p-3 cursor-pointer font-medium text-cyan-400">② TLS 证书签发(acme.sh + DNS-01)</summary>
-        <div class="p-3 pt-0 space-y-2 text-sm">
-          <p class="text-gray-400">用 DNS-01 验证(不需要公网 80/443 端口),适合 frp 内网穿透场景。</p>
-          <div class="p-2 bg-gray-800 rounded font-mono text-xs">
-            <div class="text-gray-400 mb-1"># 1. 安装 acme.sh</div>
-            <div>curl https://get.acme.sh | sh</div>
-            <div class="mt-2 text-gray-400 mb-1"># 2. 配置 DNS 服务商(一次性)</div>
-            <div>acme.sh --set-dns dns_你的服务商</div>
-            <div>export CLOUD_SECRET_ID="<YOUR_CLOUD_SECRET_ID>"</div>
-            <div>export CLOUD_SECRET_KEY="<YOUR_C…KEY>"</div>
-            <div class="mt-2 text-gray-400 mb-1"># 3. 签发证书(用 DNS-01 验证)</div>
-            <div>acme.sh --issue --dns dns_你的服务商 -d ${escapeHtml(domains[0] || 'example.com')} --keylength ec-256</div>
-            <div class="mt-2 text-gray-400 mb-1"># 4. 安装到指定目录</div>
-            <div>mkdir -p /etc/ssl/frpm</div>
-            <div>acme.sh --install-cert -d ${escapeHtml(domains[0] || 'example.com')} \\</div>
-            <div>  --ecc --cert-file /etc/ssl/frpm/${escapeHtml(domains[0] || 'example.com')}.crt \\</div>
-            <div>  --key-file /etc/ssl/frpm/${escapeHtml(domains[0] || 'example.com')}.key \\</div>
-            <div>  --reloadcmd "nginx -s reload"</div>
-          </div>
-        </div>
-      </details>
-
-      <!-- 步骤 3: nginx 配置 -->
-      <details class="mb-3 border border-gray-700 rounded" open>
-        <summary class="p-3 cursor-pointer font-medium text-cyan-400">③ nginx 反向代理配置(frp 链路)</summary>
+        <summary class="p-3 cursor-pointer font-medium text-cyan-400">① nginx 反向代理配置(frp 链路)</summary>
         <div class="p-3 pt-0 space-y-3 text-sm">
           ${nginxGuideState.vhostPort ? `
           <div class="p-2 bg-green-900/20 border border-green-700/40 rounded text-xs text-green-300">
-            ✅ 检测到 frps 的 <span class="font-mono">vhostHTTPPort = ${nginxGuideState.vhostPort}</span>。<br>
-            下方 nginx 配置会自动把请求转发到该端口,frps 再按域名路由到你的代理。
+            ✅ frps 的 <span class="font-mono">vhostHTTPPort = ${nginxGuideState.vhostPort}</span>。<br>
+            nginx 把请求转发到该端口,frps 再按域名(Host 头)路由到 frpc 代理。
           </div>` : `
           <div class="p-2 bg-red-900/20 border border-red-700/40 rounded text-xs text-red-300">
             ⚠️ 未找到 frps 的 <span class="font-mono">vhostHTTPPort</span> 配置,无法生成 nginx 配置。<br>
-            请先编辑 frps 实例,添加 <span class="font-mono">vhostHTTPPort = 2006</span>(或其他空闲端口),再回来重新生成。
+            请先编辑本 frps 实例,添加 <span class="font-mono">vhostHTTPPort = 2006</span>(或其他空闲端口)。
           </div>`}
           <!-- SSL 开关 + 证书路径 -->
           <div class="flex items-center gap-3 p-2 bg-gray-800 rounded">
@@ -1486,30 +1461,28 @@ function renderNginxGuideModal(proxy, inst) {
 
           <div>
             <label class="block text-xs text-gray-400 mb-1">nginx 配置(可复制)</label>
-            <textarea id="nginx-config-preview" readonly class="input font-mono text-xs h-64 resize-none">${escapeHtml(initialConfig)}</textarea>
+            <textarea id="nginx-config-preview" readonly class="input font-mono text-xs nginx-preview-box">${escapeHtml(initialConfig)}</textarea>
           </div>
 
           <div class="flex gap-2">
             <button onclick="copyNginxConfig()" class="btn-primary text-xs flex-1">复制配置</button>
-            <button onclick="saveNginxConfigToContainer()" class="btn-primary text-xs flex-1 bg-green-600 hover:bg-green-700">💾 保存到容器 /data/frpm/nginx/</button>
           </div>
         </div>
       </details>
 
-      <!-- 步骤 4: 验证 -->
+      <!-- 步骤 2: 部署 -->
       <details class="mb-3 border border-gray-700 rounded">
-        <summary class="p-3 cursor-pointer font-medium text-cyan-400">④ 验证与部署</summary>
+        <summary class="p-3 cursor-pointer font-medium text-cyan-400">② 部署到 frps 主机</summary>
         <div class="p-3 pt-0 space-y-2 text-sm">
           <div class="p-2 bg-gray-800 rounded font-mono text-xs">
-            <div class="text-gray-400 mb-1"># 1. 从容器复制配置到宿主机 nginx 目录</div>
-            <div>docker cp frpm:/data/frpm/nginx/${escapeHtml(proxy.name.toLowerCase())}.conf /etc/nginx/conf.d/</div>
+            <div class="text-gray-400 mb-1"># 1. 把上方配置保存为 nginx server block 文件</div>
+            <div>vim /etc/nginx/conf.d/${escapeHtml(proxy.name.toLowerCase())}.conf</div>
             <div class="mt-2 text-gray-400 mb-1"># 2. 测试 nginx 配置</div>
             <div>nginx -t</div>
             <div class="mt-2 text-gray-400 mb-1"># 3. 重载 nginx</div>
             <div>nginx -s reload</div>
-            <div class="mt-2 text-gray-400 mb-1"># 4. 测试访问</div>
+            <div class="mt-2 text-gray-400 mb-1"># 4. 验证(证书应与域名匹配)</div>
             <div>curl -I https://${escapeHtml(domains[0] || 'example.com')}</div>
-            <div>curl https://${escapeHtml(domains[0] || 'example.com')}/api/instances</div>
           </div>
         </div>
       </details>
@@ -1534,7 +1507,7 @@ function generateNginxConfigLive() {
   if (!vhostPort) return '';
 
   let cfg = `# 由 frpm 生成 - ${new Date().toLocaleString()}\n`;
-  cfg += `# 架构: 浏览器 -> nginx(TLS终结) -> frps vhostHTTPPort:${vhostPort} -> frpc -> ${proxy.local_ip || '127.0.0.1'}:${proxy.local_port || 80}\n`;
+  cfg += `# 架构: 浏览器 -> nginx(TLS终结) -> frps vhostHTTPPort:${vhostPort} -> frpc -> ${frpsProxyBackendText(proxy)}\n`;
   cfg += `# 域名: ${domains.join(', ')}\n\n`;
   cfg += `map $http_upgrade $connection_upgrade {\n    default upgrade;\n    '' close;\n}\n\n`;
   cfg += `server {\n`;
@@ -1588,26 +1561,6 @@ function copyNginxConfig() {
     document.execCommand('copy');
     toast('已复制到剪贴板', 'success');
   });
-}
-
-async function saveNginxConfigToContainer() {
-  const { instanceId, proxyId } = nginxGuideState;
-  const ssl = document.getElementById('nginx-ssl-toggle')?.checked;
-  const certPath = document.getElementById('nginx-cert-path')?.value;
-  const keyPath = document.getElementById('nginx-key-path')?.value;
-
-  try {
-    const resp = await api(`/api/instances/${instanceId}/proxies/${proxyId}/nginx-conf`, {
-      method: 'POST',
-      body: JSON.stringify({ ssl, cert_path: certPath, key_path: keyPath, save: true })
-    });
-    if (resp.host_path) {
-      toast(`✅ 已保存到 ${resp.host_path}`, 'success');
-    }
-  } catch (e) {
-    if (e && e.authExpired) return;
-    toast(`保存失败: ${e.message}`, 'error');
-  }
 }
 
 // ============ 新增/编辑代理模态框 ============
