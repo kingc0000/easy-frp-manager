@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FRP Manager</title>
+<title>FRP Manager v1.1.1</title>
 <link rel="stylesheet" href="/vendor/tailwind.css">
 <style>
   :root {
@@ -836,7 +836,7 @@ function showNewInstanceModal() {
     type: 'frpc',
     deploy_mode: 'binary',
     servers: [{ name: 'default', serverAddr: '', serverPort: 2005, token: '' }],
-    proxies: [{ name: 'nas-web', type: 'tcp', local_ip: '127.0.0.1', local_port: 8080, remote_port: 2008, custom_domains: [] }]
+    proxies: [{ name: 'nas-web', type: 'http', local_ip: '127.0.0.1', local_port: 8080, custom_domains: ['vault.example.com'], subdomain: '' }]
   };
   renderNewInstanceModal();
 }
@@ -931,22 +931,22 @@ function renderConfigFields() {
       <div class="mt-4 border border-gray-700 rounded p-3">
         <div class="flex items-center justify-between mb-2">
           <label class="font-medium text-sm flex items-center gap-2">
-            <input type="checkbox" id="ws-enable" onchange="toggleWsFields()" class="accent-blue-500">
+            <input type="checkbox" id="ws-enable" checked onchange="toggleWsFields()" class="accent-blue-500">
             📊 启用 Dashboard (webServer)
           </label>
         </div>
-        <p class="text-xs text-gray-500 mb-3">frps 内置管理面板,可看连接的 frpc 客户端和实时代理状态。<br>建议开启,否则面板上看不到实时连接信息</p>
-        <div id="ws-fields" class="hidden">
+        <p class="text-xs text-gray-500 mb-3">frps 内置管理面板,可看连接的 frpc 客户端和实时代理状态。建议开启</p>
+        <div id="ws-fields">
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block text-sm text-gray-400 mb-1">面板地址</label>
-              <input type="text" name="web_server_addr" value="0.0.0.0" class="input">
-              <p class="text-xs text-gray-500 mt-1">固定 0.0.0.0</p>
+              <input type="text" name="web_server_addr" value="127.0.0.1" class="input">
+              <p class="text-xs text-gray-500 mt-1">127.0.0.1=仅本机可访问(更安全);0.0.0.0=对外开放</p>
             </div>
             <div>
               <label class="block text-sm text-gray-400 mb-1">面板端口</label>
-              <input type="number" name="web_server_port" value="2010" min="1" max="65535" class="input">
-              <p class="text-xs text-gray-500 mt-1">建议跟 bindPort 不同(如 bindPort=2005 则填 2010)</p>
+              <input type="number" name="web_server_port" value="5067" min="1" max="65535" class="input">
+              <p class="text-xs text-gray-500 mt-1">建议跟 bindPort 不同,填 5067 即可</p>
             </div>
           </div>
           <div class="grid grid-cols-2 gap-3 mt-3">
@@ -956,7 +956,7 @@ function renderConfigFields() {
             </div>
             <div>
               <label class="block text-sm text-gray-400 mb-1">面板密码</label>
-              <input type="password" name="web_server_password" value="" class="input" placeholder="留空则不设密码">
+              <input type="password" name="web_server_password" value="admin123" class="input">
             </div>
           </div>
         </div>
@@ -1090,16 +1090,27 @@ function renderProxyRow(p, i) {
           <p class="text-xs text-gray-600 mt-1">你要穿透的服务,在 NAS 上跑的端口</p>
         </div>
       </div>
-      ${!isHttp ? `<div class="mt-2">
+      ${isHttp ? `
+      <div class="mt-2 p-2 bg-yellow-900/20 border border-yellow-700/40 rounded text-xs text-yellow-300">
+        ⚠️ <b>http/https 代理必须填域名</b>,否则 frps 不知道把哪个网址的请求转发给你,代理会启动失败。下方"远程端口"不适用。
+      </div>
+      <div class="mt-2">
+        <label class="block text-xs text-gray-500 mb-1">域名 (逗号分隔)</label>
+        <input type="text" value="${escapeHtml((p.custom_domains||[]).join(','))}" data-field="custom_domains" class="input" placeholder="vault.example.com, api.example.com">
+        <p class="text-xs text-gray-600 mt-1">完整域名,多个用逗号分隔。如: vault.example.com, api.example.com</p>
+      </div>
+      <div class="mt-2">
+        <label class="block text-xs text-gray-500 mb-1">子域名前缀(可选,与域名二选一)</label>
+        <input type="text" value="${escapeHtml(p.subdomain||'')}" data-field="subdomain" class="input" placeholder="vault">
+        <p class="text-xs text-gray-600 mt-1">只填前缀,由 frps 自动拼域名。需服务器配了 subdomainHost 才可用</p>
+      </div>` : `
+      <div class="mt-2">
         <label class="block text-xs text-gray-500 mb-1">云主机上开放的端口 (remotePort)</label>
         <input type="number" value="${p.remote_port||''}" data-field="remote_port" class="input">
         <p class="text-xs text-gray-600 mt-1">访问者通过 <code>example.com:这个端口</code> 到达 NAS。在 2000-2050 内选,别跟已用的冲突</p>
-      </div>` : ''}
-      ${isHttp ? `<div class="mt-2">
-        <label class="block text-xs text-gray-500 mb-1">域名 (逗号分隔)</label>
-        <input type="text" value="${escapeHtml((p.custom_domains||[]).join(','))}" data-field="custom_domains" class="input">
-      </div>` : ''}
-      ${isTunnel ? `<div class="mt-2">
+      </div>`}
+      ${isTunnel ? `
+      <div class="mt-2">
         <label class="block text-xs text-gray-500 mb-1">密钥 (secretKey)</label>
         <input type="text" value="${escapeHtml(p.secret_key||'')}" data-field="secret_key" class="input">
       </div>` : ''}
@@ -1413,25 +1424,20 @@ function renderDetail() {
   const cfg = i.config_content || '';
 
   document.getElementById('view-detail').innerHTML = `
-    <div class="breadcrumb">
-      <a onclick="nav('instances');loadInstances()">实例列表</a>
-      <span class="sep">/</span>
-      <span class="current">${escapeHtml(i.name)}</span>
-    </div>
-    <div class="panel p-4 mb-4">
-      <div class="flex items-center gap-3 flex-wrap">
-        <h2 class="text-xl font-semibold">${escapeHtml(i.name)}</h2>
-        <span class="badge ${i.type==='frps'?'badge-blue':'badge-gray'}">${i.type}</span>
-        <span class="inline-flex items-center gap-1.5">
-          <span class="dot ${running ? 'dot-green dot-pulse' : 'dot-red'}"></span>
-          <span class="text-sm">${running ? '运行中' : '已停止'}</span>
-        </span>
-        <span class="badge badge-gray">${escapeHtml(i.deploy_mode)}</span>
-        <div class="flex-1"></div>
-        <div class="flex gap-2">
-          <button onclick="restartInstance(${i.id})" class="btn-ghost btn-sm">重启</button>
-          <button onclick="deleteInstance(${i.id})" class="btn-danger btn-sm">删除</button>
-        </div>
+    <div class="flex items-center gap-3 mb-4 flex-wrap">
+      <button onclick="nav('instances');loadInstances()" class="btn-ghost btn-sm">← 返回实例列表</button>
+      <span class="text-gray-600">|</span>
+      <h2 class="text-xl font-semibold">${escapeHtml(i.name)}</h2>
+      <span class="badge ${i.type==='frps'?'badge-blue':'badge-gray'}">${i.type}</span>
+      <span class="inline-flex items-center gap-1.5">
+        <span class="dot ${running ? 'dot-green dot-pulse' : 'dot-red'}"></span>
+        <span class="text-sm">${running ? '运行中' : '已停止'}</span>
+      </span>
+      <span class="badge badge-gray">${escapeHtml(i.deploy_mode)}</span>
+      <div class="flex-1"></div>
+      <div class="flex gap-2">
+        <button onclick="restartInstance(${i.id})" class="btn-ghost btn-sm">重启</button>
+        <button onclick="deleteInstance(${i.id})" class="btn-danger btn-sm">删除</button>
       </div>
     </div>
     ${i.type === 'frps' && running ? `<div class="panel p-4 mb-4" id="frps-status-panel"><div class="text-gray-500 text-sm flex items-center gap-2"><span class="spinner spinner-blue"></span>加载实时状态中...</div></div>` : ''}
@@ -1869,17 +1875,20 @@ function generateNginxConfigLive() {
   if (!vhostPort) return '';
 
   let cfg = `# 由 frpm 生成 - ${new Date().toLocaleString()}\n`;
-  cfg += `# 架构: 浏览器 -> nginx(TLS终结) -> frps vhostHTTPPort:${vhostPort} -> frpc -> ${frpsProxyBackendText(proxy)}\n`;
+  cfg += `# 架构: 浏览器 -> nginx(${ssl?'TLS终结':'HTTP转发'}) -> frps vhostHTTPPort:${vhostPort} -> frpc -> ${frpsProxyBackendText(proxy)}\n`;
   cfg += `# 域名: ${domains.join(', ')}\n\n`;
   cfg += `map $http_upgrade $connection_upgrade {\n    default upgrade;\n    '' close;\n}\n\n`;
   cfg += `server {\n`;
   cfg += `    listen 80;\n`;
-  cfg += `    listen 443 ssl;\n`;
-  cfg += `    server_name ${domains.join(' ')};\n\n`;
   if (ssl) {
+    cfg += `    listen 443 ssl;\n`;
+    cfg += `    server_name ${domains.join(' ')};\n\n`;
     cfg += `    ssl_certificate     ${certPath || '/etc/ssl/frpm/example.crt'};\n`;
     cfg += `    ssl_certificate_key ${keyPath || '/etc/ssl/frpm/example.key'};\n`;
     cfg += `    ssl_protocols TLSv1.2 TLSv1.3;\n    ssl_ciphers HIGH:!aNULL:!MD5;\n\n`;
+  } else {
+    cfg += `    server_name ${domains.join(' ')};\n\n`;
+    cfg += `    # HTTPS 未启用,如需请修改证书路径后勾选\"启用 HTTPS\"\n\n`;
   }
   cfg += `    location / {\n`;
   cfg += `        # frps 的 vhostHTTPPort,按 Host 头(域名)路由到 frpc 代理\n`;
@@ -1970,7 +1979,7 @@ function renderProxyModal() {
           </div>
           <div>
             <label class="block text-sm text-gray-400 mb-1">代理类型 <span class="text-red-400">*</span></label>
-            <select id="proxy-type" class="input" onchange="onProxyTypeChange(this.value)">
+            <select id="proxy-type" class="input" onchange="onProxyTypeChangeModal(this.value)">
               ${['tcp','udp','http','https','stcp','xtcp'].map(t =>
                 `<option value="${t}" ${(p.type||'tcp')===t?'selected':''}>${t}</option>`
               ).join('')}
@@ -2007,6 +2016,8 @@ function renderProxyModal() {
 
 function renderProxyTypeFields(type) {
   const p = proxyModalState.proxy || {};
+  const el = document.getElementById('proxy-type-fields');
+  if (!el) return;
   let html = '';
 
   if (type === 'tcp' || type === 'udp') {
@@ -2044,7 +2055,7 @@ function renderProxyTypeFields(type) {
   document.getElementById('proxy-type-fields').innerHTML = html;
 }
 
-function onProxyTypeChange(type) {
+function onProxyTypeChangeModal(type) {
   renderProxyTypeFields(type);
 }
 
