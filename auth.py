@@ -16,6 +16,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import time
 from functools import wraps
@@ -214,6 +215,61 @@ def change_password(old_password: str, new_password: str, username: str) -> dict
     return {"message": "密码修改成功,请重新登录"}
 
 
+def change_username(new_username: str, old_password: str) -> dict:
+    """修改用户名。必须验证当前密码,防止未授权篡改凭证。
+
+    与改密码共用一个"验证旧密码"闸门:知道当前密码的人才能改用户名。
+    这样不需要单独的 UI 信任级别,也不会被未登录的任何人调用。
+    """
+    new_username = (new_username or "").strip()
+    if not new_username:
+        raise ValueError("用户名不能为空")
+    if len(new_username) < 3 or len(new_username) > 32:
+        raise ValueError("用户名长度需在 3-32 个字符之间")
+    if not re.fullmatch(r"[A-Za-z0-9_\-]+", new_username):
+        raise ValueError("用户名只能包含字母、数字、下划线和连字符")
+
+    cfg = _load_auth_config()
+    if not verify_password(old_password, cfg["password_hash"], cfg.get("salt", "")):
+        raise ValueError("密码错误")
+    if new_username == cfg.get("username"):
+        raise ValueError("新用户名与当前用户名相同")
+
+    cfg["username"] = new_username
+    cfg["updated_at"] = int(time.time())
+    _save_auth_config(cfg)
+    # 改用户名后清空所有会话:旧会话 token 绑的是旧用户名,登录校验会失败
+    clear_all_sessions()
+    return {"message": f"用户名已改为 {new_username},请重新登录"}
+
+
+
 def get_config_path() -> str:
     """返回凭证配置文件路径,方便用户排查。"""
     return str(AUTH_CONFIG)
+
+
+def reset_auth_config() -> dict:
+    """把凭证重置为默认 admin/admin123。
+
+    仅在"忘记密码"时由管理员手动执行:
+      docker exec frpm rm -f /data/frpm-configs/auth.json && docker restart frpm
+    或者直接跑这一行:
+      docker exec frpm python3 -c "import auth; print(auth.reset_auth_config())"
+
+    安全考虑:不提供 /api 端点。重置凭证是个高危操作,必须人工在服务器上执行,
+    不能给前端一个按钮点一下就重置(否则攻击者拿到登录页就能接管实例)。
+    """
+    cfg_path = str(AUTH_CONFIG)
+    existed = AUTH_CONFIG.exists()
+    if existed:
+        AUTH_CONFIG.unlink()
+    cfg = _load_auth_config()  # 文件不存在会重新创建默认凭证
+    return {
+        "message": "凭证已重置为默认值",
+        "username": DEFAULT_USERNAME,
+        "password": DEFAULT_PASSWORD,
+        "previous_file_existed": existed,
+        "path": cfg_path,
+    }
+

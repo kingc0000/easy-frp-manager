@@ -1025,6 +1025,29 @@ def api_auth_change_password(ctx):
     return 200, result
 
 
+@app.post("/api/auth/change-username")
+def api_auth_change_username(ctx):
+    """修改用户名(需要登录)。
+
+    用"当前密码"作为闸门,而不是用户名本身——因为要改的正是用户名。
+    这与 change-password 的认证方式一致,不需要额外的 UI 信任级别。
+    """
+    body = ctx.get("body") or {}
+    new_username = body.get("new_username") or ""
+    old_password = body.get("old_password") or ""
+    if ctx.get("session"):
+        pass  # 走认证中间件
+    if not new_username:
+        return 400, {"error": "用户名不能为空"}
+    if not old_password:
+        return 400, {"error": "当前密码不能为空"}
+    try:
+        result = auth.change_username(new_username, old_password)
+    except ValueError as e:
+        return 400, {"error": str(e)}
+    return 200, result
+
+
 @app.get("/api/auth/me")
 def api_auth_me(ctx):
     """获取当前用户信息(需要登录)。"""
