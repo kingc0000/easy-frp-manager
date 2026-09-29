@@ -629,6 +629,94 @@ def api_delete_proxy(ctx):
     return 200, {"success": True, "restart": restart_result}
 
 
+def _find_owner_by_name(proxy_name: str):
+    """在所有 frpc 实例的数据库里按代理名查找定义。
+
+    frps 详情页的代理是 frpc 注册上来的运行时状态,定义存在某个 frpc 实例的数据库里。
+    返回 (proxy_row, instance_row);找不到返回 (None, None)。
+    """
+    frpc_list = [i for i in db.list_instances() if i["type"] == "frpc"]
+    for inst in frpc_list:
+        row = db.get_proxy_by_name(inst["id"], proxy_name)
+        if row:
+            return row, inst
+    return None, None
+
+
+@app.delete("/api/instances/:id/frps-proxies/:name")
+def api_delete_frps_proxy(ctx):
+    """删除 frps 详情页里的某个代理。
+
+    入口在 frps 实例详情页(那里能看到所有连上来的 frpc 的代理,含离线残留)。
+    按代理名在本地所有 frpc 实例的数据库里查找定义,删掉 + 重生成配置 + 重启实例。
+    代理不属于本机 frpm 管理的 frpc 时返回 409(需要去那个 frpc 所在的主机删)。
+    """
+    instance_id = int(ctx["params"]["id"])
+    name = ctx["params"]["name"]
+    inst = db.get_instance(instance_id)
+    if not inst:
+        return 404, {"error": "not found"}
+    if inst["type"] != "frps":
+        return 400, {"error": "not frps instance"}
+
+    row, owner = _find_owner_by_name(name)
+    if not row:
+        return 409, {
+            "error": f"代理 {name} 不属于本机 frpm 管理的任何 frpc",
+            "hint": "请去该 frpc 所在主机(如 NAS)的 frpm 面板里删除",
+        }
+
+    db.delete_proxy(row["id"])
+    _, ok, reg_err = _regenerate_frpc_config(owner["id"])
+    if not ok:
+        return 400, {"error": f"配置生成失败: {reg_err}"}
+    restart_result = _restart_frpc_instance(owner)
+    return 200, {"success": True, "deleted": name, "instance": owner["name"],
+                 "restart": restart_result}
+
+
+@app.post("/api/instances/:id/frps-proxies/batch-delete")
+def api_batch_delete_frps_proxies(ctx):
+    """批量删除 frps 详情页里的代理(按名字列表)。
+
+    前端先拉 frps 实时状态挑出要删的代理名,POST 回来。
+    逐个删除,返回成功/失败明细(部分失败不影响其他)。
+    """
+    instance_id = int(ctx["params"]["id"])
+    inst = db.get_instance(instance_id)
+    if not inst:
+        return 404, {"error": "not found"}
+    if inst["type"] != "frps":
+        return 400, {"error": "not frps instance"}
+
+    body = ctx["body"] or {}
+    names = body.get("names") or []
+    if not isinstance(names, list):
+        return 400, {"error": "names 必须是字符串数组"}
+    names = [str(n).strip() for n in names if str(n).strip()]
+    if not names:
+        return 400, {"error": "没有要删除的代理"}
+
+    deleted, failed = [], []
+    for name in names:
+        row, owner = _find_owner_by_name(name)
+        if not row:
+            failed.append({"name": name, "error": "代理不属于本机 frpm 管理的任何 frpc"})
+            continue
+        try:
+            db.delete_proxy(row["id"])
+            _, ok, reg_err = _regenerate_frpc_config(owner["id"])
+            if not ok:
+                failed.append({"name": name, "error": f"配置生成失败: {reg_err}"})
+                continue
+            _restart_frpc_instance(owner)
+            deleted.append({"name": name, "instance": owner["name"]})
+        except Exception as e:
+            failed.append({"name": name, "error": str(e)})
+
+    return 200, {"deleted": deleted, "failed": failed}
+
+
 @app.delete("/api/instances/:id")
 def api_delete_instance(ctx):
     instance_id = int(ctx["params"]["id"])

@@ -1035,6 +1035,11 @@ function renderFrpsStatusPanel(id) {
       const nginxBtn = (hasDomains && ['http', 'https'].includes(ptype))
         ? `<button class="btn-ghost text-xs text-cyan-400" onclick="showNginxConfigForFrpsProxy(${id}, ${idx})">🌐 nginx 配置</button>`
         : '<span class="text-gray-600 text-xs">—</span>';
+      // 删除按钮:仅离线代理显示(在线代理说明 frpc 还连着,删了会立刻重新注册回来)
+      const isOffline = p.status !== 'online';
+      const deleteBtn = isOffline
+        ? `<button class="btn-ghost text-xs text-red-400" onclick="deleteFrpsProxy(${id}, '${escapeHtml(name)}')">删除</button>`
+        : '<span class="text-gray-600 text-xs">—</span>';
       return `<tr>
         <td class="font-medium">${escapeHtml(name)}</td>
         <td><span class="badge badge-blue">${escapeHtml(ptype)}</span></td>
@@ -1045,6 +1050,7 @@ function renderFrpsStatusPanel(id) {
         <td>${escapeHtml(ver)}</td>
         <td><code>${escapeHtml(tIn)} / ${escapeHtml(tOut)}</code></td>
         <td>${nginxBtn}</td>
+        <td>${deleteBtn}</td>
       </tr>`;
     }).join('');
     proxiesHtml = `<div class="overflow-x-auto">
@@ -1059,6 +1065,7 @@ function renderFrpsStatusPanel(id) {
         <th class="py-2 pr-2">版本</th>
         <th class="py-2 pr-2">今日流量(入/出)</th>
         <th class="py-2 pr-2">nginx 配置</th>
+        <th class="py-2 pr-2">操作</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
@@ -1795,6 +1802,22 @@ async function deleteProxy(instanceId, proxyId, name) {
     await api(`/api/instances/${instanceId}/proxies/${proxyId}`, { method: 'DELETE' });
     toast('代理已删除,实例重启中...', 'success');
     await loadInstanceProxies(instanceId);
+    setTimeout(() => loadInstances(), 1500);
+  } catch (err) {
+    if (err && err.authExpired) return;
+    toast(`删除失败: ${err.message}`, 'error');
+  }
+}
+
+// ============ frps 详情页:删除离线代理 ============
+// 入口在 frps 实例详情页的实时代理表里,只对离线代理显示删除按钮。
+// 在线代理说明 frpc 还连着,删了配置会立刻重新注册回来,所以不显示。
+async function deleteFrpsProxy(instanceId, name) {
+  if (!confirm(`确定删除离线代理 "${name}" 吗?\n\n删除后会重启所属 frpc 实例并重新生成配置。`)) return;
+  try {
+    const r = await api(`/api/instances/${instanceId}/frps-proxies/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    toast(`已删除 ${name}(所属实例: ${r.instance}),实例重启中...`, 'success');
+    await loadFrpsStatus(instanceId);
     setTimeout(() => loadInstances(), 1500);
   } catch (err) {
     if (err && err.authExpired) return;
