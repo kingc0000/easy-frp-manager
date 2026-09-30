@@ -17,6 +17,53 @@ warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 die()   { err "$*"; exit 1; }
 
+# 隐藏输入,显示 * 号
+read_hidden() {
+    local prompt="$1" varname="$2" show_last="${3:-4}"
+    local old_stty=""
+    local val=""
+    # stty 在管道输入时会失败,忽略即可
+    old_stty=$(stty -g 2>/dev/null) || { stty -echo 2>/dev/null; }
+    stty -echo 2>/dev/null
+    trap 'stty "$old_stty" 2>/dev/null; echo ""; return 1' INT
+
+    printf "%s" "$prompt"
+    local key
+    while IFS= read -r -s -n 1 key; do
+        if [ -z "$key" ] || [ "$key" = "" ]; then
+            # 回车
+            echo ""
+            break
+        elif [ "$key" = $'\177' ] || [ "$key" = $'\b' ]; then
+            # 退格
+            if [ -n "$val" ]; then
+                val="${val%?}"
+                printf "\b \b"
+            fi
+        else
+            val="$val$key"
+            printf "*"
+        fi
+    done
+
+    [ -n "$old_stty" ] && stty "$old_stty" 2>/dev/null
+    trap - INT
+
+    # 赋给变量
+    if [ -n "$val" ]; then
+        eval "$varname=\"\$val\""
+        # 显示确认 (后 N 位)
+        if [ "$show_last" != "0" ] && [ ${#val} -ge 4 ]; then
+            local last="${val: -${show_last}}"
+            printf "  %s已输入 ***%s%s\n" "$GREEN" "$last" "$NC"
+        elif [ -n "$val" ]; then
+            printf "  %s已输入 (%d 字符)%s\n" "$GREEN" "${#val}" "$NC"
+        fi
+    fi
+
+    printf ""
+}
+
 CONF="/etc/frpm-setup.conf"
 ACME_HOME="${HOME}/.acme.sh"
 
@@ -50,9 +97,53 @@ collect_params() {
     read -r -p "服务器公网 IP: " -e SERVER_IP
     read -r -p "证书联系邮箱: " -e EMAIL
     read -r -p "DNS 服务商 (tencent/aliyun/cloudflare): " -e DNS_PROVIDER
-    read -r -p "DNS API Key ID: " -e DNS_API_KEY
-    read -r -s -p "DNS API Secret/Token: " -e DNS_API_SECRET
-    echo
+
+    # 根据 DNS 服务商展示对应的提示文案
+    case "$DNS_PROVIDER" in
+        tencent)
+            KEY_PROMPT="DNS API Key ID (SecretId, AKID 开头，回车跳过用环境变量)"
+            SECRET_PROMPT="DNS API Secret (SecretKey, 32 位，回车跳过用环境变量)"
+            ;;
+        aliyun)
+            KEY_PROMPT="DNS API Key ID (AccessKey ID，回车跳过用环境变量)"
+            SECRET_PROMPT="DNS API Secret (AccessKey Secret，回车跳过用环境变量)"
+            ;;
+        cloudflare)
+            KEY_PROMPT="(Cloudflare 不需要 Key ID，直接回车)"
+            SECRET_PROMPT="Cloudflare API Token (回车跳过用环境变量)"
+            ;;
+    esac
+
+    read_hidden "$KEY_PROMPT: " DNS_API_KEY 4
+    if [ -z "$DNS_API_KEY" ]; then
+        # 用户按回车跳过，从环境变量兜底
+        case "$DNS_PROVIDER" in
+            tencent)    DNS_API_KEY="$TENCENT_SECRET_ID" ;;
+            aliyun)     DNS_API_KEY="$ALIYUN_ACCESS_KEY_ID" ;;
+            cloudflare) DNS_API_KEY="" ;;
+        esac
+        [ -n "$DNS_API_KEY" ] && info "Key ID 从环境变量复用: ${DNS_API_KEY:0:8}..."
+    fi
+
+    read_hidden "$SECRET_PROMPT: " DNS_API_SECRET 4
+    if [ -z "$DNS_API_SECRET" ]; then
+        # 用户按回车跳过，从环境变量兜底
+        case "$DNS_PROVIDER" in
+            tencent)    DNS_API_SECRET="$TENCENT_SECRET_KEY" ;;
+            aliyun)     DNS_API_SECRET="$ALIYUN_ACCESS_KEY_SECRET" ;;
+            cloudflare) DNS_API_SECRET="$CF_API_KEY" ;;
+        esac
+        [ -n "$DNS_API_SECRET" ] && info "Secret 从环境变量复用"
+    fi
+
+    # 最后验证：两个都有值才继续
+    if [ -z "$DNS_API_SECRET" ]; then
+        die "DNS Secret 为空：输入时按了回车，且环境变量也没有。请重新跑脚本输入，或先 export 环境变量"
+    fi
+    if [ "$DNS_PROVIDER" != "cloudflare" ] && [ -z "$DNS_API_KEY" ]; then
+        die "DNS Key ID 为空：输入时按了回车，且环境变量也没有。请重新跑脚本输入"
+    fi
+    ok "DNS API 已配置"
 
     read -r -p "frpm WebUI 端口 [2003]: " -e FRPM_PORT
     FRPM_PORT="${FRPM_PORT:-2003}"
@@ -202,24 +293,39 @@ issue_cert() {
     local dns_arg
     case "$DNS_PROVIDER" in
         tencent)
-            export TENCENT_SECRET_ID="$DNS_API_KEY"
-            export TENCENT_SECRET_KEY="$DNS_API_SECRET"
+            # 优先用已设置的环境变量(用户手动 export 的)，否则用脚本收集的
+            export TENCENT_SECRET_ID="${TENCENT_SECRET_ID:-$DNS_API_KEY}"
+            export TENCENT_SECRET_KEY="${TENCENT_SECRET_KEY:-$DNS_API_SECRET}"
             dns_arg="dns_tencent"
             ;;
         aliyun)
-            export ALIYUN_ACCESS_KEY_ID="$DNS_API_KEY"
-            export ALIYUN_ACCESS_KEY_SECRET="$DNS_API_SECRET"
+            export ALIYUN_ACCESS_KEY_ID="${ALIYUN_ACCESS_KEY_ID:-$DNS_API_KEY}"
+            export ALIYUN_ACCESS_KEY_SECRET="${ALIYUN_ACCESS_KEY_SECRET:-$DNS_API_SECRET}"
             dns_arg="dns_aliyun"
             ;;
         cloudflare)
-            export CF_API_EMAIL="$EMAIL"
-            export CF_API_KEY="$DNS_API_SECRET"
+            export CF_API_EMAIL="${CF_API_EMAIL:-$EMAIL}"
+            export CF_API_KEY="${CF_API_KEY:-$DNS_API_SECRET}"
             dns_arg="dns_cf"
             ;;
         *)
             die "不支持的 DNS 服务商: $DNS_PROVIDER"
             ;;
     esac
+
+    # 验证 key 非空
+    case "$DNS_PROVIDER" in
+        tencent)
+            [ -n "$TENCENT_SECRET_ID" ] && [ -n "$TENCENT_SECRET_KEY" ] || die "TENCENT_SECRET_ID/KEY 为空"
+            ;;
+        aliyun)
+            [ -n "$ALIYUN_ACCESS_KEY_ID" ] && [ -n "$ALIYUN_ACCESS_KEY_SECRET" ] || die "ALIYUN_ACCESS_KEY 为空"
+            ;;
+        cloudflare)
+            [ -n "$CF_API_KEY" ] || die "CF_API_KEY 为空"
+            ;;
+    esac
+    ok "DNS API 已配置"
 
     "$ACME_HOME/acme.sh" --issue \
         -d "$DOMAIN" \

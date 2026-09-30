@@ -66,6 +66,52 @@
 ### Docker 部署(推荐)
 
 ```bash
+# 1. 拉取镜像(从 Docker Hub)
+docker pull mejeor/easy-frp-manager:latest
+
+# 2. 创建数据目录
+mkdir -p /data/frpm /data/frpm-configs
+
+# 3. 启动容器
+docker run -d \
+  --name frpm \
+  --restart unless-stopped \
+  -p 2003:8080 \
+  -v /data/frpm:/data/frpm \
+  -v /data/frpm-configs:/data/frpm-configs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  --cap-add=SYS_PTRACE \
+  --security-opt seccomp=unconfined \
+  mejeor/easy-frp-manager:latest
+
+# 4. 访问
+# 浏览器打开 http://<服务器IP>:2003
+# 默认账号 admin / admin123(首登改密)
+```
+
+**Docker Hub 镜像**:[mejeor/easy-frp-manager](https://hub.docker.com/r/mejeor/easy-frp-manager)
+- `latest`: 最新稳定版
+- `1.x`: 正式版版本 tag
+- `0.x`: 开发版版本 tag
+
+### 一键部署脚本(推荐,带 HTTPS 证书)
+
+如果需要在同一台服务器上配置泛域名 + TLS 证书 + nginx 反代,用一键脚本:
+
+```bash
+wget -qO /tmp/setup-server.sh \
+  "https://raw.githubusercontent.com/kingc0000/easy-frp-manager/main/scripts/setup-server.sh"
+chmod +x /tmp/setup-server.sh
+sudo bash /tmp/setup-server.sh
+```
+
+脚本会自动完成:收集参数 → 申请泛域名证书 → 配 nginx → 部署 frpm 容器。
+
+### 本地构建(备用,开发者用)
+
+如果 Docker Hub 拉不到镜像,或要基于源码开发:
+
+```bash
 # 1. 构建镜像(本地 docker build,不需要联网拉依赖)
 cd frp-manager
 docker build -t frp-manager:local .
