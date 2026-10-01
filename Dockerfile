@@ -12,10 +12,16 @@ LABEL org.opencontainers.image.licenses="MIT"
 WORKDIR /app
 
 # 安装 docker CLI(从 Docker 官方静态二进制,只取 docker CLI 不要 daemon/containerd)
-# 用代理加速 + 腾讯云镜像源 fallback 官方源
+# 用 TARGETARCH(buildx 自动注入)做架构映射,不用 dpkg --print-architecture
+# 腾讯云镜像源(国内快) fallback 官方源
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tar \
-    && (curl -fsSL --max-time 120 "https://mirrors.cloud.tencent.com/docker-ce/linux/static/stable/$(dpkg --print-architecture)/docker-29.8.2.tgz" -o /tmp/docker.tgz \
-        || curl -fsSL --max-time 180 "https://download.docker.com/linux/static/stable/$(dpkg --print-architecture)/docker-29.8.2.tgz" -o /tmp/docker.tgz) \
+    && case "$TARGETARCH" in \
+        amd64) DOCKER_ARCH=x86_64 ;; \
+        arm64) DOCKER_ARCH=aarch64 ;; \
+        *) DOCKER_ARCH="$TARGETARCH" ;; \
+    esac \
+    && (curl -fsSL --max-time 120 "https://mirrors.cloud.tencent.com/docker-ce/linux/static/stable/${DOCKER_ARCH}/docker-29.8.2.tgz" -o /tmp/docker.tgz \
+        || curl -fsSL --max-time 180 "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-29.8.2.tgz" -o /tmp/docker.tgz) \
     && tar xzf /tmp/docker.tgz -C /tmp/ docker/docker \
     && mv /tmp/docker/docker /usr/local/bin/docker \
     && chmod +x /usr/local/bin/docker \
