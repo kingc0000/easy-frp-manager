@@ -254,31 +254,73 @@ check_deps() {
     # 配置 Docker Hub 镜像加速(中国大陆默认拉不到)
     if ! grep -q "registry-mirrors" /etc/docker/daemon.json 2>/dev/null; then
         info "配置 Docker Hub 镜像加速..."
+
+        # 自动检测云厂商,选择最优镜像源
+        local mirrors=()
+        local cloud=""
+        if [ -r /sys/class/dmi/id/product_name ]; then
+            cloud=$(grep -i -E "aliyun|tencent|huawei|aws|azure" /sys/class/dmi/id/product_name 2>/dev/null || echo "")
+        fi
+        # 检测 metadata 服务(备用)
+        if [ -z "$cloud" ] && curl -fs --max-time 2 "http://100.100.100.200/latest/meta-data/instance-id" >/dev/null 2>&1; then
+            cloud="aliyun"
+        fi
+        if [ -z "$cloud" ] && curl -fs --max-time 2 "http://metadata.tencentyun.com/latest/meta-data/instance-id" >/dev/null 2>&1; then
+            cloud="tencent"
+        fi
+
+        case "$cloud" in
+            tencent)
+                mirrors=("https://mirror.ccs.tencentyun.com" "https://docker.mirrors.ustc.edu.cn")
+                info "  检测到腾讯云，使用 ccs.tencentyun.com 镜像"
+                ;;
+            aliyun)
+                mirrors=("https://docker.mirrors.ustc.edu.cn" "https://hub-mirror.c.163.com" "https://mirror.baidubce.com")
+                info "  检测到阿里云，使用中科大/网易/百度镜像"
+                ;;
+            huawei)
+                mirrors=("https://docker.mirrors.ustc.edu.cn" "https://hub-mirror.c.163.com")
+                info "  检测到华为云，使用通用镜像"
+                ;;
+            *)
+                # 其他云/本地机房/未知,优先通用镜像
+                mirrors=("https://docker.mirrors.ustc.edu.cn" "https://hub-mirror.c.163.com" "https://mirror.baidubce.com")
+                info "  未识别云厂商，使用通用镜像源"
+                ;;
+        esac
+
         mkdir -p /etc/docker
         # 已有 daemon.json 就合并,没有就新建
+        local mirror_json
+        mirror_json=$(printf '%s\n' "${mirrors[@]}" | python3 -c "import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))" 2>/dev/null)
+        [ -z "$mirror_json" ] && mirror_json='["https://docker.mirrors.ustc.edu.cn"]'
+
         if [ -f /etc/docker/daemon.json ]; then
-            python3 -c "
-import json
+            python3 - "$mirror_json" <<'PY' 2>/dev/null || true
+import json, sys
+mirrors = json.loads(sys.argv[1])
 with open('/etc/docker/daemon.json') as f:
     d = json.load(f)
-d['registry-mirrors'] = d.get('registry-mirrors', []) + ['https://mirror.ccs.tencentyun.com', 'https://docker.mirrors.ustc.edu.cn']
-d['registry-mirrors'] = list(dict.fromkeys(d['registry-mirrors']))  # 去重
+existing = d.get('registry-mirrors', [])
+for m in mirrors:
+    if m not in existing:
+        existing.append(m)
+d['registry-mirrors'] = existing
 with open('/etc/docker/daemon.json', 'w') as f:
-    json.dump(d, f, indent=2)
-" 2>/dev/null || true
+    json.dump(d, f, indent=2, ensure_ascii=False)
+PY
         else
-            cat > /etc/docker/daemon.json <<'JSON'
-{
-  "registry-mirrors": [
-    "https://mirror.ccs.tencentyun.com",
-    "https://docker.mirrors.ustc.edu.cn"
-  ]
-}
-JSON
+            python3 - "$mirror_json" <<'PY'
+import json, sys
+mirrors = json.loads(sys.argv[1])
+with open('/etc/docker/daemon.json', 'w') as f:
+    json.dump({"registry-mirrors": mirrors}, f, indent=2, ensure_ascii=False)
+PY
         fi
         systemctl restart docker
         sleep 2
-        ok "Docker 镜像加速已配置: $(cat /etc/docker/daemon.json | tr -d ' \n')"
+        ok "Docker 镜像加速已配置"
+        cat /etc/docker/daemon.json | grep -A 20 "registry-mirrors" | head -15
     else
         ok "Docker 镜像加速已配置"
     fi
