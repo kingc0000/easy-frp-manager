@@ -293,19 +293,19 @@ issue_cert() {
     local dns_arg
     case "$DNS_PROVIDER" in
         tencent)
-            # 优先用已设置的环境变量(用户手动 export 的)，否则用脚本收集的
-            export TENCENT_SECRET_ID="${TENCENT_SECRET_ID:-$DNS_API_KEY}"
-            export TENCENT_SECRET_KEY="${TENCENT_SECRET_KEY:-$DNS_API_SECRET}"
+            # DNS_API_KEY/SECRET 已经是最终值(用户输入优先,空值时已用环境变量兜底过)
+            export TENCENT_SECRET_ID="$DNS_API_KEY"
+            export TENCENT_SECRET_KEY="$DNS_API_SECRET"
             dns_arg="dns_tencent"
             ;;
         aliyun)
-            export ALIYUN_ACCESS_KEY_ID="${ALIYUN_ACCESS_KEY_ID:-$DNS_API_KEY}"
-            export ALIYUN_ACCESS_KEY_SECRET="${ALIYUN_ACCESS_KEY_SECRET:-$DNS_API_SECRET}"
+            export ALIYUN_ACCESS_KEY_ID="$DNS_API_KEY"
+            export ALIYUN_ACCESS_KEY_SECRET="$DNS_API_SECRET"
             dns_arg="dns_aliyun"
             ;;
         cloudflare)
-            export CF_API_EMAIL="${CF_API_EMAIL:-$EMAIL}"
-            export CF_API_KEY="${CF_API_KEY:-$DNS_API_SECRET}"
+            export CF_API_EMAIL="$EMAIL"
+            export CF_API_KEY="$DNS_API_SECRET"
             dns_arg="dns_cf"
             ;;
         *)
@@ -313,19 +313,23 @@ issue_cert() {
             ;;
     esac
 
-    # 验证 key 非空
+    # 验证 key 非空,并把前 8 位/后 4 位打出来确认
     case "$DNS_PROVIDER" in
         tencent)
             [ -n "$TENCENT_SECRET_ID" ] && [ -n "$TENCENT_SECRET_KEY" ] || die "TENCENT_SECRET_ID/KEY 为空"
+            ok "TENCENT_SECRET_ID: ${TENCENT_SECRET_ID:0:8}...${TENCENT_SECRET_ID: -4}"
+            ok "TENCENT_SECRET_KEY: ***${TENCENT_SECRET_KEY: -4}"
             ;;
         aliyun)
             [ -n "$ALIYUN_ACCESS_KEY_ID" ] && [ -n "$ALIYUN_ACCESS_KEY_SECRET" ] || die "ALIYUN_ACCESS_KEY 为空"
+            ok "ALIYUN_ACCESS_KEY_ID: ${ALIYUN_ACCESS_KEY_ID:0:8}..."
+            ok "ALIYUN_ACCESS_KEY_SECRET: ***${ALIYUN_ACCESS_KEY_SECRET: -4}"
             ;;
         cloudflare)
             [ -n "$CF_API_KEY" ] || die "CF_API_KEY 为空"
+            ok "CF_API_KEY: ***${CF_API_KEY: -4}"
             ;;
     esac
-    ok "DNS API 已配置"
 
     "$ACME_HOME/acme.sh" --issue \
         -d "$DOMAIN" \
