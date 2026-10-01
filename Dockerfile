@@ -11,14 +11,13 @@ LABEL org.opencontainers.image.licenses="MIT"
 
 WORKDIR /app
 
-# 安装 docker CLI(容器内直接可用,通过 docker.sock 管理宿主机容器)
-# 用腾讯云镜像源(国内快),失败 fallback 官方源
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tar \
-    && (curl -fsSL --max-time 30 "https://mirrors.cloud.tencent.com/docker-ce/linux/static/stable/$(dpkg --print-architecture)/docker-27.3.1.tgz" -o /tmp/docker.tgz \
-        || curl -fsSL --max-time 60 "https://download.docker.com/linux/static/stable/$(dpkg --print-architecture)/docker-27.3.1.tgz" -o /tmp/docker.tgz) \
-    && tar xzf /tmp/docker.tgz -C /tmp/ \
-    && mv /tmp/docker/docker /usr/local/bin/docker \
-    && rm -rf /tmp/docker /tmp/docker.tgz \
+# 安装 docker CLI(docker-ce 包已包含,无需额外下载静态二进制)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl tar \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # 拷贝代码
