@@ -14,7 +14,7 @@ frpm 版本管理模块。
 """
 
 # 当前版本号
-VERSION = "1.1.0"
+VERSION = "1.1.2"
 
 # 简短描述(用于 Docker Hub / GitHub 显示)
 DESCRIPTION = "frp 可视化管理面板 | 零依赖 | Docker/Binary 双模式 | 中文友好"
@@ -27,6 +27,17 @@ DOCKER_HUB = "mejeor/easy-frp-manager"
 
 # 版本变更历史(最新在前)
 CHANGELOG = """
+v1.1.2 (2026-10-01)
+- fix: frpm 容器内置 docker CLI,修复面板显示 'Docker ✗ 不可用'
+- fix: setup-server.sh 自动检测云厂商选镜像源(阿里云/腾讯云/华为云)
+- fix: 去掉 'http2 on;'(老 nginx 不支持),nginx -t 失败明确报错
+- fix: acme.sh Skipping 容错,证书已存在时不再挂脚本
+- fix: Tencent_SecretId/Key 驼峰命名(全大写 acme.sh 读不到)
+- feat: 自动配 Docker Hub 镜像加速(中科大已关停,换 DaoCloud/1Panel/网易)
+
+v1.1.1 (2026-09-24)
+- fix: 修复 acme.sh 跳过证书申请时脚本挂掉
+
 v1.1.0 (2026-09-24)
 - feat: 添加登录功能(默认 admin/admin123,支持修改密码)
 - feat: 内置 frp v0.61.1 二进制(amd64+arm64),用户无需单独安装 frp
