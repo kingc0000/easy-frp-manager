@@ -12,8 +12,9 @@ LABEL org.opencontainers.image.licenses="MIT"
 WORKDIR /app
 
 # 安装 docker CLI(从 Docker 官方静态二进制,只取 docker CLI 不要 daemon/containerd)
-# 用 TARGETARCH(buildx 自动注入)做架构映射,不用 dpkg --print-architecture
+# TARGETARCH 是 buildx 自动注入的 ARG,做架构映射
 # 腾讯云镜像源(国内快) fallback 官方源
+ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tar \
     && case "$TARGETARCH" in \
         amd64) DOCKER_ARCH=x86_64 ;; \
