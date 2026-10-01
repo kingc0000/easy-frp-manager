@@ -11,10 +11,15 @@ LABEL org.opencontainers.image.licenses="MIT"
 
 WORKDIR /app
 
-# 安装 docker CLI(用 debian 官方源的 docker.io,无需额外 gpg 配置)
-# 版本比 docker-ce 老但够用,关键是 CLI 能调 docker.sock 就行
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl docker.io \
+# 安装 docker CLI(从 Docker 官方静态二进制,只取 docker CLI 不要 daemon/containerd)
+# 用代理加速 + 腾讯云镜像源 fallback 官方源
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tar \
+    && (curl -fsSL --max-time 120 "https://mirrors.cloud.tencent.com/docker-ce/linux/static/stable/$(dpkg --print-architecture)/docker-29.8.2.tgz" -o /tmp/docker.tgz \
+        || curl -fsSL --max-time 180 "https://download.docker.com/linux/static/stable/$(dpkg --print-architecture)/docker-29.8.2.tgz" -o /tmp/docker.tgz) \
+    && tar xzf /tmp/docker.tgz -C /tmp/ docker/docker \
+    && mv /tmp/docker/docker /usr/local/bin/docker \
+    && chmod +x /usr/local/bin/docker \
+    && rm -rf /tmp/docker /tmp/docker.tgz \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # 拷贝代码
