@@ -293,7 +293,10 @@ issue_cert() {
     local dns_arg
     case "$DNS_PROVIDER" in
         tencent)
-            # DNS_API_KEY/SECRET 已经是最终值(用户输入优先,空值时已用环境变量兜底过)
+            # acme.sh 的 dns_tencent 模块用驼峰命名 Tencent_SecretId/Tencent_SecretKey
+            # 也兼容常见的全大写 TENCENT_SECRET_ID/TENCENT_SECRET_KEY
+            export Tencent_SecretId="$DNS_API_KEY"
+            export Tencent_SecretKey="$DNS_API_SECRET"
             export TENCENT_SECRET_ID="$DNS_API_KEY"
             export TENCENT_SECRET_KEY="$DNS_API_SECRET"
             dns_arg="dns_tencent"
@@ -316,9 +319,9 @@ issue_cert() {
     # 验证 key 非空,并把前 8 位/后 4 位打出来确认
     case "$DNS_PROVIDER" in
         tencent)
-            [ -n "$TENCENT_SECRET_ID" ] && [ -n "$TENCENT_SECRET_KEY" ] || die "TENCENT_SECRET_ID/KEY 为空"
-            ok "TENCENT_SECRET_ID: ${TENCENT_SECRET_ID:0:8}...${TENCENT_SECRET_ID: -4}"
-            ok "TENCENT_SECRET_KEY: ***${TENCENT_SECRET_KEY: -4}"
+            [ -n "$Tencent_SecretId" ] && [ -n "$Tencent_SecretKey" ] || die "Tencent_SecretId/Key 为空"
+            ok "Tencent_SecretId: ${Tencent_SecretId:0:8}...${Tencent_SecretId: -4}"
+            ok "Tencent_SecretKey: ***${Tencent_SecretKey: -4}"
             ;;
         aliyun)
             [ -n "$ALIYUN_ACCESS_KEY_ID" ] && [ -n "$ALIYUN_ACCESS_KEY_SECRET" ] || die "ALIYUN_ACCESS_KEY 为空"
