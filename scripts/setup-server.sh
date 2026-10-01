@@ -468,7 +468,6 @@ setup_nginx() {
 server {
     listen 80;
     listen 443 ssl;
-    http2 on;
     server_name frpm.$SUBDOMAIN.$DOMAIN;
 
     ssl_certificate     $cert_dir/$SUBDOMAIN.crt;
@@ -493,7 +492,17 @@ server {
 }
 EOF
 
-    nginx -t && systemctl reload nginx
+    # nginx -t 失败时明确报错退出
+    if ! nginx -t 2>&1; then
+        err "nginx 配置校验失败,请检查: $conf"
+        err "常见原因: nginx 版本太老或证书路径错误"
+        exit 1
+    fi
+
+    if ! systemctl reload nginx 2>&1; then
+        err "nginx reload 失败"
+        exit 1
+    fi
 
     ok "nginx 配置完成: $conf"
 }
