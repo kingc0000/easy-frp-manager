@@ -251,6 +251,38 @@ check_deps() {
         ok "Docker 已安装: $(docker --version)"
     fi
 
+    # 配置 Docker Hub 镜像加速(中国大陆默认拉不到)
+    if ! grep -q "registry-mirrors" /etc/docker/daemon.json 2>/dev/null; then
+        info "配置 Docker Hub 镜像加速..."
+        mkdir -p /etc/docker
+        # 已有 daemon.json 就合并,没有就新建
+        if [ -f /etc/docker/daemon.json ]; then
+            python3 -c "
+import json
+with open('/etc/docker/daemon.json') as f:
+    d = json.load(f)
+d['registry-mirrors'] = d.get('registry-mirrors', []) + ['https://mirror.ccs.tencentyun.com', 'https://docker.mirrors.ustc.edu.cn']
+d['registry-mirrors'] = list(dict.fromkeys(d['registry-mirrors']))  # 去重
+with open('/etc/docker/daemon.json', 'w') as f:
+    json.dump(d, f, indent=2)
+" 2>/dev/null || true
+        else
+            cat > /etc/docker/daemon.json <<'JSON'
+{
+  "registry-mirrors": [
+    "https://mirror.ccs.tencentyun.com",
+    "https://docker.mirrors.ustc.edu.cn"
+  ]
+}
+JSON
+        fi
+        systemctl restart docker
+        sleep 2
+        ok "Docker 镜像加速已配置: $(cat /etc/docker/daemon.json | tr -d ' \n')"
+    else
+        ok "Docker 镜像加速已配置"
+    fi
+
     if [ ! -x "$ACME_HOME/acme.sh" ]; then
         info "安装 acme.sh..."
         curl https://get.acme.sh | sh
