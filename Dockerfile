@@ -11,13 +11,10 @@ LABEL org.opencontainers.image.licenses="MIT"
 
 WORKDIR /app
 
-# 安装 docker CLI(docker-ce 包已包含,无需额外下载静态二进制)
+# 安装 docker CLI(用 debian 官方源的 docker.io,无需额外 gpg 配置)
+# 版本比 docker-ce 老但够用,关键是 CLI 能调 docker.sock 就行
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl tar \
-    && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends docker-ce-cli \
+    ca-certificates curl docker.io \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # 拷贝代码
