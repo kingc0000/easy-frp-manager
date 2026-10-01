@@ -248,22 +248,26 @@ def detect_frp() -> FrpStatus:
                 if role == "frps" and not status.frps_installed:
                     status.frps_installed = True
                     status.frps_location = cname
-                    # 从容器内拿版本
-                    r2 = subprocess.run(
-                        ["docker", "exec", cname, "/usr/local/bin/frps", "-v"],
-                        capture_output=True, text=True, timeout=5,
-                    )
-                    if r2.returncode == 0:
-                        status.frps_version = r2.stdout.strip().split()[-1]
+                    # 从容器内拿版本(兼容 /app/bin 与 /usr/local/bin 两种路径)
+                    for p in ("/app/bin/frps", "/usr/local/bin/frps"):
+                        r2 = subprocess.run(
+                            ["docker", "exec", cname, p, "-v"],
+                            capture_output=True, text=True, timeout=5,
+                        )
+                        if r2.returncode == 0:
+                            status.frps_version = r2.stdout.strip().split()[-1]
+                            break
                 if role == "frpc" and not status.frpc_installed:
                     status.frpc_installed = True
                     status.frpc_location = cname
-                    r2 = subprocess.run(
-                        ["docker", "exec", cname, "/usr/local/bin/frpc", "-v"],
-                        capture_output=True, text=True, timeout=5,
-                    )
-                    if r2.returncode == 0:
-                        status.frpc_version = r2.stdout.strip().split()[-1]
+                    for p in ("/app/bin/frpc", "/usr/local/bin/frpc"):
+                        r2 = subprocess.run(
+                            ["docker", "exec", cname, p, "-v"],
+                            capture_output=True, text=True, timeout=5,
+                        )
+                        if r2.returncode == 0:
+                            status.frpc_version = r2.stdout.strip().split()[-1]
+                            break
         except Exception:
             pass
 
@@ -301,19 +305,14 @@ def detect_frp() -> FrpStatus:
 
 
 def _get_container_frp_version(container) -> Optional[str]:
-    """从容器里执行 frps/frpc -v 拿版本。"""
-    try:
-        out = container.exec_run(["/usr/local/bin/frps", "-v"])
-        if out.exit_code == 0:
-            return out.output.decode().strip().split()[-1]
-    except Exception:
-        pass
-    try:
-        out = container.exec_run(["/usr/local/bin/frpc", "-v"])
-        if out.exit_code == 0:
-            return out.output.decode().strip().split()[-1]
-    except Exception:
-        pass
+    """从容器里执行 frps/frpc -v 拿版本(兼容 /app/bin 与 /usr/local/bin)。"""
+    for p in ("/app/bin/frps", "/usr/local/bin/frps", "/app/bin/frpc", "/usr/local/bin/frpc"):
+        try:
+            out = container.exec_run([p, "-v"])
+            if out.exit_code == 0:
+                return out.output.decode().strip().split()[-1]
+        except Exception:
+            continue
     return None
 
 

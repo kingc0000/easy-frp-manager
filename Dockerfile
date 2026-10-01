@@ -11,23 +11,8 @@ LABEL org.opencontainers.image.licenses="MIT"
 
 WORKDIR /app
 
-# 安装 docker CLI(从 Docker 官方静态二进制,只取 docker CLI 不要 daemon/containerd)
-# TARGETARCH 是 buildx 自动注入的 ARG,做架构映射
-# 腾讯云镜像源(国内快) fallback 官方源
-ARG TARGETARCH
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tar \
-    && case "$TARGETARCH" in \
-        amd64) DOCKER_ARCH=x86_64 ;; \
-        arm64) DOCKER_ARCH=aarch64 ;; \
-        *) DOCKER_ARCH="$TARGETARCH" ;; \
-    esac \
-    && (curl -fsSL --max-time 120 "https://mirrors.cloud.tencent.com/docker-ce/linux/static/stable/${DOCKER_ARCH}/docker-29.8.2.tgz" -o /tmp/docker.tgz \
-        || curl -fsSL --max-time 180 "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-29.8.2.tgz" -o /tmp/docker.tgz) \
-    && tar xzf /tmp/docker.tgz -C /tmp/ docker/docker \
-    && mv /tmp/docker/docker /usr/local/bin/docker \
-    && chmod +x /usr/local/bin/docker \
-    && rm -rf /tmp/docker /tmp/docker.tgz \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+# 不内置 docker CLI —— docker CLI 由部署脚本挂载宿主机二进制进容器
+# (镜像保持轻量;docker.sock + docker CLI 挂载由 setup-server.sh/deploy-docker.sh 负责)
 
 # 拷贝代码
 COPY app.py auth.py db.py config_gen.py frp_ops.py http_server.py version.py ./
@@ -50,7 +35,8 @@ EXPOSE 8080
 
 # 健康检查
 # 用免认证的 /api/auth/check 探测(返回 200),不能用需要登录的 /api/dashboard(会 401 误判 unhealthy)
+# 端口跟随 FRPM_PORT 环境变量,适配 -e FRPM_PORT=xxxx 部署(host 网络)与默认 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/auth/check', timeout=3).read()" || exit 1
+  CMD python3 -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/api/auth/check' % os.environ.get('FRPM_PORT','8080'), timeout=3).read()" || exit 1
 
 CMD ["python3", "app.py"]

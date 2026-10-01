@@ -14,7 +14,7 @@ frpm 版本管理模块。
 """
 
 # 当前版本号
-VERSION = "1.1.2"
+VERSION = "1.1.3"
 
 # 简短描述(用于 Docker Hub / GitHub 显示)
 DESCRIPTION = "frp 可视化管理面板 | 零依赖 | Docker/Binary 双模式 | 中文友好"
@@ -27,6 +27,12 @@ DOCKER_HUB = "mejeor/easy-frp-manager"
 
 # 版本变更历史(最新在前)
 CHANGELOG = """
+v1.1.3 (2026-10-01)
+- fix: 镜像移除内置 docker CLI,改回部署时挂载(镜像瘦身 ~243MB→~148MB)
+- fix: docker 模式版本探测兼容 /app/bin 与 /usr/local/bin 双路径
+- fix: setup-server.sh 补 FRPM_DB/FRPM_CONFIG_DIR/FRPM_LOG_DIR 环境变量,容器重建数据不丢
+- fix: Dockerfile healthcheck 端口跟随 FRPM_PORT,不再硬编码 8080
+
 v1.1.2 (2026-10-01)
 - fix: frpm 容器内置 docker CLI,修复面板显示 'Docker ✗ 不可用'
 - fix: setup-server.sh 自动检测云厂商选镜像源(阿里云/腾讯云/华为云)

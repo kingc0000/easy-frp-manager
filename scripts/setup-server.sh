@@ -533,6 +533,9 @@ deploy_frpm() {
         -v /data/frpm-configs:/data/frpm-configs \
         -v /var/run/docker.sock:/var/run/docker.sock \
         -v "$(command -v docker):/usr/bin/docker:ro" \
+        -e FRPM_DB=/data/frpm/frpm.sqlite \
+        -e FRPM_CONFIG_DIR=/data/frpm/configs \
+        -e FRPM_LOG_DIR=/data/frpm/logs \
         --cap-add=SYS_PTRACE \
         --security-opt seccomp=unconfined \
         mejeor/easy-frp-manager:latest
