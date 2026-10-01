@@ -271,20 +271,20 @@ check_deps() {
 
         case "$cloud" in
             tencent)
-                mirrors=("https://mirror.ccs.tencentyun.com" "https://docker.mirrors.ustc.edu.cn")
+                mirrors=("https://mirror.ccs.tencentyun.com" "https://docker.m.daocloud.io")
                 info "  检测到腾讯云，使用 ccs.tencentyun.com 镜像"
                 ;;
             aliyun)
-                mirrors=("https://docker.mirrors.ustc.edu.cn" "https://hub-mirror.c.163.com" "https://mirror.baidubce.com")
-                info "  检测到阿里云，使用中科大/网易/百度镜像"
+                mirrors=("https://docker.m.daocloud.io" "https://docker.1panel.live" "https://hub-mirror.c.163.com")
+                info "  检测到阿里云，使用 DaoCloud/1Panel/网易镜像"
                 ;;
             huawei)
-                mirrors=("https://docker.mirrors.ustc.edu.cn" "https://hub-mirror.c.163.com")
+                mirrors=("https://docker.m.daocloud.io" "https://docker.1panel.live")
                 info "  检测到华为云，使用通用镜像"
                 ;;
             *)
                 # 其他云/本地机房/未知,优先通用镜像
-                mirrors=("https://docker.mirrors.ustc.edu.cn" "https://hub-mirror.c.163.com" "https://mirror.baidubce.com")
+                mirrors=("https://docker.m.daocloud.io" "https://docker.1panel.live" "https://hub-mirror.c.163.com" "https://mirror.baidubce.com")
                 info "  未识别云厂商，使用通用镜像源"
                 ;;
         esac
@@ -293,7 +293,7 @@ check_deps() {
         # 已有 daemon.json 就合并,没有就新建
         local mirror_json
         mirror_json=$(printf '%s\n' "${mirrors[@]}" | python3 -c "import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))" 2>/dev/null)
-        [ -z "$mirror_json" ] && mirror_json='["https://docker.mirrors.ustc.edu.cn"]'
+        [ -z "$mirror_json" ] && mirror_json='["https://docker.m.daocloud.io"]'
 
         if [ -f /etc/docker/daemon.json ]; then
             python3 - "$mirror_json" <<'PY' 2>/dev/null || true
@@ -532,6 +532,7 @@ deploy_frpm() {
         -v /data/frpm:/data/frpm \
         -v /data/frpm-configs:/data/frpm-configs \
         -v /var/run/docker.sock:/var/run/docker.sock \
+        -v "$(command -v docker):/usr/bin/docker:ro" \
         --cap-add=SYS_PTRACE \
         --security-opt seccomp=unconfined \
         mejeor/easy-frp-manager:latest
@@ -539,6 +540,13 @@ deploy_frpm() {
     sleep 5
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${FRPM_CONTAINER}$"; then
         ok "frpm 容器已启动 (端口 $FRPM_PORT)"
+        # 验证容器内 docker CLI 可用(管理 frp 实例用)
+        if docker exec "$FRPM_CONTAINER" docker version --format 'docker CLI: {{.Client.Version}}' 2>&1 | grep -q "docker CLI"; then
+            ok "容器内 docker CLI 可用"
+        else
+            warn "容器内 docker CLI 不可用，frpm 将无法管理 frp 实例"
+            warn "请检查: command -v docker 路径是否正确"
+        fi
     else
         err "frpm 启动失败，查看日志: docker logs $FRPM_CONTAINER"
     fi
