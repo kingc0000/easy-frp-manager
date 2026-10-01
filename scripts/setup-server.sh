@@ -408,16 +408,37 @@ issue_cert() {
             ;;
     esac
 
-    "$ACME_HOME/acme.sh" --issue \
+    # acme.sh 检测到有效证书会 "Skipping",返回码非 0,加 || true 让脚本继续
+    local issue_log
+    issue_log=$("$ACME_HOME/acme.sh" --issue \
         -d "$DOMAIN" \
         -d "*.$SUBDOMAIN.$DOMAIN" \
         --dns "$dns_arg" \
-        -m "$EMAIL"
+        -m "$EMAIL" 2>&1) || {
+            echo "$issue_log"
+            if echo "$issue_log" | grep -q "Skipping\|Domains not changed"; then
+                warn "证书已存在且有效，跳过重新申请"
+                info "下次续期: $(echo "$issue_log" | grep -o 'Next renewal time is: .*')"
+            elif echo "$issue_log" | grep -q "error\|Error\|failed\|Failed"; then
+                die "证书申请失败,请检查上方错误"
+            else
+                # 其他未知情况,继续尝试(可能是部分成功)
+                warn "acme.sh 返回非 0,但日志无明显错误,继续..."
+            fi
+        }
 
-    "$ACME_HOME/acme.sh" --install-cert -d "$DOMAIN" -d "*.$SUBDOMAIN.$DOMAIN" \
+    # install-cert: 把证书文件拷到 nginx 目录
+    if ! "$ACME_HOME/acme.sh" --install-cert -d "$DOMAIN" -d "*.$SUBDOMAIN.$DOMAIN" \
         --key-file "$cert_dir/$SUBDOMAIN.key" \
         --fullchain-file "$cert_dir/$SUBDOMAIN.crt" \
-        --reloadcmd "systemctl reload nginx"
+        --reloadcmd "systemctl reload nginx" 2>&1 | tail -5; then
+        warn "install-cert 返回非 0,检查证书文件..."
+    fi
+
+    # 最终检查: 证书文件必须存在
+    if [ ! -f "$cert_dir/$SUBDOMAIN.crt" ] || [ ! -f "$cert_dir/$SUBDOMAIN.key" ]; then
+        die "证书文件不存在: $cert_dir (crt/key)"
+    fi
 
     ok "证书已安装到 $cert_dir"
 }
