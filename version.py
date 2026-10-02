@@ -14,7 +14,7 @@ frpm 版本管理模块。
 """
 
 # 当前版本号
-VERSION = "1.1.3"
+VERSION = "1.1.4"
 
 # 简短描述(用于 Docker Hub / GitHub 显示)
 DESCRIPTION = "frp 可视化管理面板 | 零依赖 | Docker/Binary 双模式 | 中文友好"
@@ -27,6 +27,12 @@ DOCKER_HUB = "mejeor/easy-frp-manager"
 
 # 版本变更历史(最新在前)
 CHANGELOG = """
+v1.1.4 (2026-10-01)
+- feat: 所有部署脚本统一 --network host 网络模式,frps/frpc 端口天然直通
+- fix: setup-server.sh 改用 host 网络(原 bridge 漏映射 frps 端口,外部连不上)
+- fix: install.sh 对齐 host 网络 + FRPM_PORT/DB/CONFIG 环境变量 + docker.sock 挂载
+- docs: README 增加网络模式说明(新增端口无需改 docker run / 无需重启容器)
+
 v1.1.3 (2026-10-01)
 - fix: 镜像移除内置 docker CLI,改回部署时挂载(镜像瘦身 ~243MB→~148MB)
 - fix: docker 模式版本探测兼容 /app/bin 与 /usr/local/bin 双路径

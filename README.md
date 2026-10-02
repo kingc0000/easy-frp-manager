@@ -65,6 +65,10 @@
 
 ### Docker 部署(推荐)
 
+> **网络模式说明**:frpm 容器统一使用 `--network host`(与腾讯云生产环境一致)。
+> frps/frpc 在容器内监听/连接的端口**直接就是宿主机端口**,新增端口**无需改 docker run、无需端口映射、无需重启容器**——在面板里加端口保存即生效。
+> frpm 面板自身端口由 `FRPM_PORT` 环境变量控制(默认 2003)。
+
 ```bash
 # 1. 拉取镜像(从 Docker Hub)
 docker pull mejeor/easy-frp-manager:latest
@@ -72,14 +76,19 @@ docker pull mejeor/easy-frp-manager:latest
 # 2. 创建数据目录
 mkdir -p /data/frpm /data/frpm-configs
 
-# 3. 启动容器
+# 3. 启动容器(host 网络,零端口映射)
 docker run -d \
   --name frpm \
   --restart unless-stopped \
-  -p 2003:8080 \
+  --network host \
+  -e FRPM_PORT=2003 \
+  -e FRPM_DB=/data/frpm/frpm.sqlite \
+  -e FRPM_CONFIG_DIR=/data/frpm/configs \
+  -e FRPM_LOG_DIR=/data/frpm/logs \
   -v /data/frpm:/data/frpm \
   -v /data/frpm-configs:/data/frpm-configs \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$(command -v docker):/usr/bin/docker:ro" \
   --cap-add=SYS_PTRACE \
   --security-opt seccomp=unconfined \
   mejeor/easy-frp-manager:latest

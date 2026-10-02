@@ -141,10 +141,19 @@ install_docker_service() {
     docker run -d \
         --name frpm \
         --restart unless-stopped \
-        -p "$PORT:8080" \
-        -v "$DATA_DIR:/data" \
+        --network host \
+        -e FRPM_PORT="$PORT" \
+        -e FRPM_DB="$DATA_DIR/frpm.sqlite" \
+        -e FRPM_CONFIG_DIR="$DATA_DIR/configs" \
+        -e FRPM_LOG_DIR="$DATA_DIR/logs" \
+        -v "$DATA_DIR:/data/frpm" \
+        -v /data/frpm-configs:/data/frpm-configs \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -v "$(command -v docker):/usr/bin/docker:ro" \
+        --cap-add=SYS_PTRACE \
+        --security-opt seccomp=unconfined \
         "$DOCKER_IMAGE"
-    ok "Docker 容器 frpm 已启动"
+    ok "Docker 容器 frpm 已启动(host 网络,端口 $PORT,新增端口无需映射)"
 }
 
 # ===== 验证服务 =====
