@@ -85,7 +85,13 @@ class Router:
                 continue
             m2 = re.match(pattern, path)
             if m2:
-                return handler, m2.groupdict()
+                params = m2.groupdict()
+                # :id / :pid 参数必须是纯数字,否则视为未匹配(返回 404 而非 500)
+                # (防 /api/instances/abc 这类请求触发 handler 里 int() 崩溃)
+                for key in ("id", "pid"):
+                    if key in params and not params[key].isdigit():
+                        return None, None
+                return handler, params
         return None, None
 
     def static(self, directory):

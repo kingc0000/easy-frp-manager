@@ -9,7 +9,10 @@
 """
 
 import os
+import re
+import shutil
 import socket
+import subprocess
 import time
 import urllib.request
 import urllib.error
@@ -22,6 +25,7 @@ import config_gen
 import db
 import frp_ops
 from http_server import App
+import nginx_api
 
 app = App(static_folder="static")
 
@@ -994,7 +998,19 @@ def api_auth_login(ctx):
 @app.post("/api/auth/logout")
 def api_auth_logout(ctx):
     """登出(需要登录)。"""
-    token = ctx.get("token")
+    # ctx 里没有 token 字段,要从 headers 提取(与 auth_check 同逻辑)
+    headers = ctx.get("headers", {}) or {}
+    auth_header = headers.get("Authorization") or headers.get("authorization") or ""
+    token = ""
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+    else:
+        cookie_header = headers.get("Cookie") or headers.get("cookie") or ""
+        for part in cookie_header.split(";"):
+            part = part.strip()
+            if part.startswith("session="):
+                token = part[8:].strip()
+                break
     if token:
         auth.delete_session(token)
     return 200, {"message": "已登出"}
@@ -1056,7 +1072,6 @@ def api_auth_me(ctx):
         "username": session.get("username"),
         "expires_in": session.get("expire_at", 0) - int(time.time()),
     }
-
 
 # ============ 工具函数:从表单数据构造 dataclass ============
 
@@ -1339,6 +1354,8 @@ def main():
         print(msg, flush=True)
         sys.stdout.flush()
     db.init_db()
+    # nginx 配置 API(从 nginx_api 模块注册,保持 app.py 精简)
+    nginx_api.register_nginx_routes(app)
     port = int(os.environ.get("FRPM_PORT", "8080"))
     log(f"[*] FRP Manager 启动中... 监听 0.0.0.0:{port}")
     log(f"[*] 配置目录: {CONFIG_DIR}")

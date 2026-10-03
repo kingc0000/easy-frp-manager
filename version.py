@@ -14,7 +14,7 @@ frpm 版本管理模块。
 """
 
 # 当前版本号
-VERSION = "1.1.4"
+VERSION = "1.2.0"
 
 # 简短描述(用于 Docker Hub / GitHub 显示)
 DESCRIPTION = "frp 可视化管理面板 | 零依赖 | Docker/Binary 双模式 | 中文友好"
@@ -27,6 +27,12 @@ DOCKER_HUB = "mejeor/easy-frp-manager"
 
 # 版本变更历史(最新在前)
 CHANGELOG = """
+v1.2.0 (2026-10-03)
+- feat: 前端完全重做,卡片式设计(渐变背景/大圆角/emoji 图标/彩色统计卡),实例列表改卡片网格,脱离深色表格风格
+- feat: 新增 nginx 一键配置模块(复用宿主已有 conf 模板 + 证书路径自动探测 + 写入自动 nginx -t 校验回滚)
+- fix: 登出接口从 headers 取 token(原从 ctx 取导致登出无效)
+- fix: Router 端口冲突/非数字 id 路由崩溃返回 500 的问题
+
 v1.1.4 (2026-10-01)
 - feat: 所有部署脚本统一 --network host 网络模式,frps/frpc 端口天然直通
 - fix: setup-server.sh 改用 host 网络(原 bridge 漏映射 frps 端口,外部连不上)

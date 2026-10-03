@@ -15,7 +15,7 @@ WORKDIR /app
 # (镜像保持轻量;docker.sock + docker CLI 挂载由 setup-server.sh/deploy-docker.sh 负责)
 
 # 拷贝代码
-COPY app.py auth.py db.py config_gen.py frp_ops.py http_server.py version.py ./
+COPY app.py nginx_api.py auth.py db.py config_gen.py frp_ops.py http_server.py version.py ./
 COPY static/ static/
 COPY scripts/ scripts/
 # frp 内置二进制(amd64 + arm64)
