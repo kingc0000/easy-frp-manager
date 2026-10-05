@@ -243,6 +243,12 @@
   /* ===== 表单区块(新建实例等) ===== */
   .form-sec { border:1px solid var(--border); border-radius:var(--radius-sm); padding:.9rem 1rem; margin-bottom:.9rem; background:#fbfcff; }
   .form-sec-title { font-size:.85rem; font-weight:700; margin:0 0 .6rem; display:flex; align-items:center; justify-content:space-between; }
+  /* <summary> 折叠标题:浏览器默认展开箭头也是 flex 项,space-between 会把箭头推到最左、文字最右,间距过大;
+     这里覆盖为 flex-start + 小 gap,让箭头紧贴文字;仍保留 ::marker 颜色跟随主题 */
+  summary.form-sec-title { justify-content:flex-start; gap:.45rem; cursor:pointer; list-style:none; }
+  summary.form-sec-title::-webkit-details-marker { display:none; }
+  summary.form-sec-title::before { content:"▸"; display:inline-block; transition:transform .18s; font-size:.72rem; color:var(--muted); }
+  details[open] > summary.form-sec-title::before { transform:rotate(90deg); }
   .info-note { border-radius:.8rem; padding:.8rem .95rem; font-size:.82rem; margin-bottom:1rem; }
   .info-note.blue { background:var(--info-bg); border:1px solid rgba(99,102,241,.3); color:var(--info-fg); }
   .info-note.green { background:var(--success-bg); border:1px solid rgba(16,185,129,.3); color:var(--success-fg); }

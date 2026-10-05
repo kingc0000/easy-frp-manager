@@ -103,7 +103,7 @@ function renderNginxGuideModal(proxy) {
 
         <!-- 步骤 1: nginx 配置 -->
         <details class="form-sec" style="margin-bottom:.9rem;" open>
-          <summary class="form-sec-title" style="cursor:pointer;list-style:none;">① nginx 反向代理配置(frp 链路)</summary>
+          <summary class="form-sec-title">① nginx 反向代理配置(frp 链路)</summary>
           <div style="padding-top:.6rem;">
             ${nginxGuideState.vhostPort ? `
             <div class="info-note green" style="margin-bottom:.7rem;">
@@ -160,7 +160,7 @@ function renderNginxGuideModal(proxy) {
 
         <!-- 步骤 2: 部署 -->
         <details class="form-sec" style="margin-bottom:.6rem;">
-          <summary class="form-sec-title" style="cursor:pointer;list-style:none;">② 部署到 frps 主机</summary>
+          <summary class="form-sec-title">② 部署到 frps 主机</summary>
           <div style="padding-top:.6rem;">
             <pre class="code-block" style="margin:0;font-size:.76rem;">
 # 1. 点击上方「⚡ 一键配置」自动完成:
@@ -206,8 +206,17 @@ function generateNginxConfigLive() {
   cfg += `# 架构: 浏览器 -> nginx(${ssl?'TLS终结':'HTTP转发'}) -> frps vhostHTTPPort:${vhostPort} -> frpc -> ${frpsProxyBackendText(proxy)}\n`;
   cfg += `# 域名: ${domains.join(', ')}\n\n`;
   cfg += `map $http_upgrade $connection_upgrade {\n    default upgrade;\n    '' close;\n}\n\n`;
+  if (ssl) {
+    // HTTPS 启用:先放一个 80 端口 server 块,强制 301 跳转到 https
+    cfg += `# --- HTTP(80) -> HTTPS(443) 强制跳转 ---\n`;
+    cfg += `server {\n`;
+    cfg += `    listen 80;\n`;
+    cfg += `    server_name ${domains.join(' ')};\n`;
+    cfg += `    # 启用 HTTPS 后,HTTP 请求一律 301 跳转到 HTTPS\n`;
+    cfg += `    return 301 https://$host$request_uri;\n`;
+    cfg += `}\n\n`;
+  }
   cfg += `server {\n`;
-  cfg += `    listen 80;\n`;
   if (ssl) {
     cfg += `    listen 443 ssl;\n`;
     cfg += `    server_name ${domains.join(' ')};\n\n`;
@@ -215,8 +224,9 @@ function generateNginxConfigLive() {
     cfg += `    ssl_certificate_key ${keyPath || '/etc/nginx/certs/service.example.key'};\n`;
     cfg += `    ssl_protocols TLSv1.2 TLSv1.3;\n    ssl_ciphers HIGH:!aNULL:!MD5;\n\n`;
   } else {
+    cfg += `    listen 80;\n`;
     cfg += `    server_name ${domains.join(' ')};\n\n`;
-    cfg += `    # HTTPS 未启用,如需请修改证书路径后勾选\"启用 HTTPS\"\n\n`;
+    cfg += `    # HTTPS 未启用,如需请修改证书路径后勾选"启用 HTTPS"\n\n`;
   }
   cfg += `    location / {\n`;
   cfg += `        # frps 的 vhostHTTPPort,按 Host 头(域名)路由到 frpc 代理\n`;
