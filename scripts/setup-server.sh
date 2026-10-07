@@ -49,14 +49,14 @@ read_hidden() {
     [ -n "$old_stty" ] && stty "$old_stty" 2>/dev/null
     trap - INT
 
-    # 赋给变量
+    # 赋给变量 (空输入也赋值空串,避免 set -u 下变量未定义报错)
+    eval "$varname=\"\\$val\""
+    # 显示确认 (后 N 位)
     if [ -n "$val" ]; then
-        eval "$varname=\"\$val\""
-        # 显示确认 (后 N 位)
         if [ "$show_last" != "0" ] && [ ${#val} -ge 4 ]; then
             local last="${val: -${show_last}}"
             printf "  %s已输入 ***%s%s\n" "$GREEN" "$last" "$NC"
-        elif [ -n "$val" ]; then
+        else
             printf "  %s已输入 (%d 字符)%s\n" "$GREEN" "${#val}" "$NC"
         fi
     fi
@@ -118,8 +118,8 @@ collect_params() {
     if [ -z "$DNS_API_KEY" ]; then
         # 用户按回车跳过，从环境变量兜底
         case "$DNS_PROVIDER" in
-            tencent)    DNS_API_KEY="$TENCENT_SECRET_ID" ;;
-            aliyun)     DNS_API_KEY="$ALIYUN_ACCESS_KEY_ID" ;;
+            tencent)    DNS_API_KEY="${TENCENT_SECRET_ID:-}" ;;
+            aliyun)     DNS_API_KEY="${ALIYUN_ACCESS_KEY_ID:-}" ;;
             cloudflare) DNS_API_KEY="" ;;
         esac
         [ -n "$DNS_API_KEY" ] && info "Key ID 从环境变量复用: ${DNS_API_KEY:0:8}..."
@@ -129,9 +129,9 @@ collect_params() {
     if [ -z "$DNS_API_SECRET" ]; then
         # 用户按回车跳过，从环境变量兜底
         case "$DNS_PROVIDER" in
-            tencent)    DNS_API_SECRET="$TENCENT_SECRET_KEY" ;;
-            aliyun)     DNS_API_SECRET="$ALIYUN_ACCESS_KEY_SECRET" ;;
-            cloudflare) DNS_API_SECRET="$CF_API_KEY" ;;
+            tencent)    DNS_API_SECRET="${TENCENT_SECRET_KEY:-}" ;;
+            aliyun)     DNS_API_SECRET="${ALIYUN_ACCESS_KEY_SECRET:-}" ;;
+            cloudflare) DNS_API_SECRET="${CF_API_KEY:-}" ;;
         esac
         [ -n "$DNS_API_SECRET" ] && info "Secret 从环境变量复用"
     fi
