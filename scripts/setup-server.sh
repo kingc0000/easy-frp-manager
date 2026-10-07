@@ -132,7 +132,7 @@ collect_params() {
         case "$DNS_PROVIDER" in
             tencent)    DNS_API_SECRET="${TENCENT_SECRET_KEY:-}" ;;
             aliyun)     DNS_API_SECRET="${ALIYUN_ACCESS_KEY_SECRET:-}" ;;
-            cloudflare) DNS_API_SECRET="${CF_API_KEY:-}" ;;
+            cloudflare) DNS_API_SECRET="${CF_API_KEY:-${CF_Token:-}}" ;;
         esac
         [ -n "$DNS_API_SECRET" ] && info "Secret 从环境变量复用"
     fi
@@ -382,8 +382,11 @@ issue_cert() {
             dns_arg="dns_aliyun"
             ;;
         cloudflare)
-            export CF_API_EMAIL="$EMAIL"
-            export CF_API_KEY="$DNS_API_SECRET"
+            # acme.sh dns_cf 认的变量名是 CF_Token(API Token) 或 CF_Key+CF_Email(Global Key),
+            # 不是 CF_API_KEY/CF_API_EMAIL。同时导出两种,acme.sh 优先用 CF_Token。
+            export CF_Token="$DNS_API_SECRET"
+            export CF_Key="$DNS_API_SECRET"
+            export CF_Email="$EMAIL"
             dns_arg="dns_cf"
             ;;
         *)
@@ -404,8 +407,8 @@ issue_cert() {
             ok "ALIYUN_ACCESS_KEY_SECRET: ***${ALIYUN_ACCESS_KEY_SECRET: -4}"
             ;;
         cloudflare)
-            [ -n "$CF_API_KEY" ] || die "CF_API_KEY 为空"
-            ok "CF_API_KEY: ***${CF_API_KEY: -4}"
+            [ -n "$CF_Token" ] || die "CF_Token 为空(Cloudflare API Token)"
+            ok "CF_Token: ***${CF_Token: -4}"
             ;;
     esac
 
