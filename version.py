@@ -14,7 +14,7 @@ frpm 版本管理模块。
 """
 
 # 当前版本号
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 
 # 简短描述(用于 Docker Hub / GitHub 显示)
 DESCRIPTION = "frp 可视化管理面板 | 零依赖 | Docker/Binary 双模式 | 中文友好"

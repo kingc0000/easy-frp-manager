@@ -30,9 +30,14 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/easy-frp-manager
+          images: mejeor/easy-frp-manager
+          # 双标签策略:
+          #  - latest   : 每次构建都打(main 开发分支 + v* 发版 tag 都会更新)
+          #  - 1.2.1    : 仅在 v* tag 时由 semver 解析生成(如 v1.2.1 -> 1.2.1 / v1.2),永久保留
+          # 发版流程: git tag v1.2.1 && git push origin v1.2.1
+          #          -> Hub 上同时更新 mejeor/easy-frp-manager:1.2.1 与 :latest
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest
             type=semver,pattern={{version}}
             type=semver,pattern=v{{major}}.{{minor}}
 
