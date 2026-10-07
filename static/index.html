@@ -1022,6 +1022,18 @@ function renderConfigFields() {
           <p class="form-hint">frpc 连接此端口。注意:需要在安全组放行此端口</p>
         </div>
       </div>
+      <div class="form-grid2" style="margin-bottom:.8rem;">
+        <div>
+          <label class="form-label">HTTP 虚拟端口 (vhostHTTPPort)</label>
+          <input type="number" name="vhost_http_port" value="2006" min="1" max="65535" class="input">
+          <p class="form-hint">http/https 类型代理按域名路由用的端口,nginx 反代也转发到这里。<br>如需 <code>https</code> 代理,下方再填 vhostHTTPSPort</p>
+        </div>
+        <div>
+          <label class="form-label">HTTPS 虚拟端口 (vhostHTTPSPort)</label>
+          <input type="number" name="vhost_https_port" value="" min="1" max="65535" class="input" placeholder="可选">
+          <p class="form-hint">可选。仅当你要配 <code>https</code> 类型代理(或 TLS 终结)时填写,一般留空</p>
+        </div>
+      </div>
       <div style="margin-bottom:.8rem;">
         <label class="form-label">认证 Token (authToken)</label>
         <div style="display:flex;gap:.5rem;">
@@ -1306,13 +1318,18 @@ function collectFormData() {
     config: {},
   };
   if (data.type === 'frps') {
-    ['bind_addr','bind_port','auth_token','transport_heartbeat_interval','transport_heartbeat_ttl','allow_arbitrary_ports'].forEach(f => {
+    ['bind_addr','bind_port','auth_token','transport_heartbeat_interval','transport_heartbeat_ttl','allow_arbitrary_ports','vhost_http_port','vhost_https_port'].forEach(f => {
       const el = form.querySelector(`[name=${f}]`);
       if (el) data.config[f] = (el.type === 'checkbox') ? el.checked : el.value;
     });
     data.config.bind_port = parseInt(data.config.bind_port);
     data.config.transport_heartbeat_interval = parseInt(data.config.transport_heartbeat_interval);
     data.config.transport_heartbeat_ttl = parseInt(data.config.transport_heartbeat_ttl);
+    // vhost 端口:空字符串转 undefined,避免生成 frps 配置时输出空值
+    if (data.config.vhost_http_port !== undefined && data.config.vhost_http_port !== '') data.config.vhost_http_port = parseInt(data.config.vhost_http_port);
+    else delete data.config.vhost_http_port;
+    if (data.config.vhost_https_port !== undefined && data.config.vhost_https_port !== '') data.config.vhost_https_port = parseInt(data.config.vhost_https_port);
+    else delete data.config.vhost_https_port;
     // webServer (Dashboard) - 仅当启用时收集
     const wsEnable = document.getElementById('ws-enable');
     if (wsEnable && wsEnable.checked) {
