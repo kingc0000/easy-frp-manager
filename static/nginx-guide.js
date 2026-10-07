@@ -5,7 +5,7 @@
 // 依赖的全局变量:nginxGuideState(本文件定义), frpsStatusData/detailInstance(主脚本定义)。
 
 // ============ 域名穿透指南 ============
-let nginxGuideState = { instanceId: null, proxyId: null, proxy: null, instance: null, vhostPort: null, selectedTemplateContent: null };
+let nginxGuideState = { instanceId: null, proxyId: null, proxy: null, instance: null, vhostPort: null, selectedTemplateContent: null, zone: null };
 
 function showNginxConfigForFrpsProxy(instanceId, proxyIndex) {
   // 重置覆盖确认状态
@@ -78,6 +78,9 @@ function renderNginxGuideModal(proxy) {
   // 默认证书路径占位(模板列表加载后会探测宿主真实证书并覆盖):
   // 优先 /etc/nginx/certs 下的通配符证书(service.235300.xyz 体系)
   const zone = (domains[0] || '').split('.').slice(-2).join('.');
+  nginxGuideState.zone = zone;  // 供 loadNginxTemplates 按域名匹配子目录证书
+  // 默认证书路径占位(模板列表加载后会探测宿主真实证书并按 zone 匹配覆盖):
+  // 证书体系支持 /etc/nginx/certs/<zone>/<name>.crt 子目录形式(如 oracle.235301.xyz/oracle.crt)
   const defaultCertPath = `/etc/nginx/certs/service.${zone || 'example.com'}.crt`;
   const defaultKeyPath = defaultCertPath.slice(0, -4) + '.key';
 
@@ -278,14 +281,28 @@ async function loadNginxTemplates() {
     const res = await api('/api/nginx/templates');
     const tpls = (res && res.templates) || [];
     // 预填宿主真实证书路径(通用配置模式):仅当证书框还是初始占位值时覆盖
-    if (res && res.default_cert) {
+    // 优先按当前域名 zone 匹配证书(如 /etc/nginx/certs/oracle.235301.xyz/oracle.crt),
+    // 匹配不到再退回服务端探测的第一个证书(default_cert)
+    let picked = null;
+    const zone = nginxGuideState.zone || '';
+    const certs = (res && res.certs) || [];
+    if (zone && certs.length) {
+      picked =
+        certs.find(c => c.crt.indexOf('/' + zone + '/') !== -1) ||  // 目录名完全匹配
+        certs.find(c => c.crt.indexOf(zone) !== -1) ||             // 路径含 zone
+        null;
+    }
+    if (!picked && res && res.default_cert) {
+      picked = { crt: res.default_cert, key: res.default_key || res.default_cert.slice(0, -4) + '.key' };
+    }
+    if (picked) {
       const cInput = document.getElementById('nginx-cert-path');
       const kInput = document.getElementById('nginx-key-path');
       // 初始占位值特征:/etc/ssl/frpm/(旧) 或含 /certs/service. 前缀(新占位,由 renderNginxGuideModal 生成)
       if (cInput && !cInput.dataset.userEdited &&
           (cInput.value.includes('/etc/ssl/frpm/') || cInput.value.includes('/certs/service.'))) {
-        cInput.value = res.default_cert;
-        if (kInput) kInput.value = res.default_key || (res.default_cert ? res.default_cert.slice(0, -4) + '.key' : '');
+        cInput.value = picked.crt;
+        if (kInput) kInput.value = picked.key;
       }
     }
     sel.innerHTML = '<option value="">— 不使用模板(用下方通用配置) —</option>';

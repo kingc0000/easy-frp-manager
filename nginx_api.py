@@ -162,15 +162,19 @@ def register_nginx_routes(app):
             "sz=$(wc -c < \"$f\"); echo \"===$sz===${f#/host}\"; "
             "cat \"$f\"; echo; "
             "done; "
-            # 证书探测:优先 /etc/nginx/certs,次 /data/frpm/certs,输出 CERTS=<crt>|<key>
+            # 证书探测:优先 /etc/nginx/certs,次 /data/frpm/certs;递归子目录
+            # (兼容 /etc/nginx/certs/oracle.235301.xyz/oracle.crt 这类子目录证书),
+            # 输出全部候选 CERTS=<crt>|<key>(不中断,交给前端按域名 zone 匹配)
             "for d in /host/etc/nginx/certs /host/data/frpm/certs; do "
-            "for c in $d/*.crt; do [ -f \"$c\" ] || continue; "
-            "[ -f \"${c%.crt}.key\" ] && { echo \"CERTS=${c#/host}|${c%.crt}.key\"; break 2; }; "
+            "[ -d \"$d\" ] || continue; "
+            "find \"$d\" -type f -name '*.crt' 2>/dev/null | sort | while read -r c; do "
+            "[ -f \"${c%.crt}.key\" ] && echo \"CERTS=${c#/host}|${c%.crt}.key\"; "
             "done; done"
         )
         if not r["ok"]:
             return 200, {"success": False, "error": r["error"] or "无法读取 conf.d", "templates": []}
         files = []
+        certs = []
         default_cert = default_key = ""
         # 解析 helper 输出:CERTS= 行在最后(证书探测),===size===path 块在前(conf 内容)
         for line in r["output"].splitlines():
@@ -178,6 +182,7 @@ def register_nginx_routes(app):
                 c, k = line[len("CERTS="):].split("|", 1)
                 if not default_cert:
                     default_cert, default_key = c, k
+                certs.append({"crt": c, "key": k})
         for size, path, lines in _parse_conf_blocks(r["output"]):
             filename = os.path.basename(path)
             # 白名单:只处理普通 .conf 文件名(防文件名注入 shell)
@@ -197,7 +202,8 @@ def register_nginx_routes(app):
             })
         files.sort(key=lambda x: (not x["usable"], x["is_default"] is False, x["filename"]))
         return 200, {"success": True, "templates": files,
-                     "default_cert": default_cert, "default_key": default_key}
+                     "default_cert": default_cert, "default_key": default_key,
+                     "certs": certs}
 
     @app.post("/api/nginx/apply")
     def api_nginx_apply(ctx):
