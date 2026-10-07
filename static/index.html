@@ -1026,12 +1026,21 @@ function renderConfigFields() {
         <div>
           <label class="form-label">HTTP 虚拟端口 (vhostHTTPPort)</label>
           <input type="number" name="vhost_http_port" value="2006" min="1" max="65535" class="input">
-          <p class="form-hint">http/https 类型代理按域名路由用的端口,nginx 反代也转发到这里。<br>如需 <code>https</code> 代理,下方再填 vhostHTTPSPort</p>
+          <p class="form-hint" style="line-height:1.7;">
+            <b>作用:</b> frps 接收「http 类型代理」流量的端口。访问链路:
+            <code>浏览器 → nginx(443) → 本端口(2006) → frps 按域名(Host 头)路由 → 对应 frpc 代理</code>。<br>
+            <b>什么时候必须填:</b> 只要你的 frpc 端要创建 <code>http</code> 类型代理(按域名访问网站),就必须填,所有 frpc 的 http 代理共用这个端口。<br>
+            <b>什么时候可以不填:</b> 只用 <code>tcp</code>/<code>udp</code> 类型代理(如 SSH、数据库端口转发)时,不需要它。
+          </p>
         </div>
         <div>
           <label class="form-label">HTTPS 虚拟端口 (vhostHTTPSPort)</label>
           <input type="number" name="vhost_https_port" value="" min="1" max="65535" class="input" placeholder="可选">
-          <p class="form-hint">可选。仅当你要配 <code>https</code> 类型代理(或 TLS 终结)时填写,一般留空</p>
+          <p class="form-hint" style="line-height:1.7;">
+            <b>作用:</b> 与上面类似,但用于 <code>https</code> 类型代理——由 <b>frps 直接终结 TLS</b>(证书配置在 frpc 代理上)。<br>
+            <b>什么时候填:</b> 仅当 frpc 端创建 <code>https</code> 类型代理,且希望 frps 自己解 TLS 时才需要。<br>
+            <b>最常见场景留空:</b> 如果你用 nginx 终结 TLS(证书放 nginx),再转发到上面的 vhostHTTPPort,那 frps 只需要处理 http,这里留空即可。
+          </p>
         </div>
       </div>
       <div style="margin-bottom:.8rem;">
