@@ -50,7 +50,8 @@ read_hidden() {
     trap - INT
 
     # 赋给变量 (空输入也赋值空串,避免 set -u 下变量未定义报错)
-    eval "$varname=\"\\$val\""
+    # 用 printf -v 按名赋值: 无转义问题,空值/特殊字符都安全
+    printf -v "$varname" "%s" "$val"
     # 显示确认 (后 N 位)
     if [ -n "$val" ]; then
         if [ "$show_last" != "0" ] && [ ${#val} -ge 4 ]; then
