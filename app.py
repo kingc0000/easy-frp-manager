@@ -231,6 +231,9 @@ def api_create_instance(ctx):
 
     if not name or not instance_type:
         return 400, {"error": "name and type required"}
+    # 实例名白名单:字母/数字/下划线/中划线,防路径穿越(config_path/log/pid 都含实例名)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
+        return 400, {"error": "实例名只允许字母/数字/下划线/中划线(≤64 字符)"}
     if instance_type not in ("frps", "frpc"):
         return 400, {"error": "type must be frps or frpc"}
     if deploy_mode != "binary":

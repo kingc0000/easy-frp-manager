@@ -237,6 +237,11 @@ def create_proxy(instance_id, proxy_data):
     name = (proxy_data.get("name") or "").strip()
     if not name:
         raise ValueError("代理名不能为空")
+    # 代理名白名单：字母/数字/下划线/中划线，防破坏生成的 TOML 配置
+    # （代理名会作为 frp [[proxies]] 的 name 字段和 nginx conf 的 server_name）
+    import re
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
+        raise ValueError("代理名只允许字母/数字/下划线/中划线(≤64 字符)")
     if get_proxy_by_name(instance_id, name):
         raise ValueError(f"代理名重复: {name}")
 
