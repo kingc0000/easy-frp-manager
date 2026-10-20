@@ -245,6 +245,10 @@ def create_proxy(instance_id, proxy_data):
     row["instance_id"] = instance_id
     row["created_at"] = now
     row["updated_at"] = now
+    # 补齐 NOT NULL 列默认值：local_ip/local_port 未传时显式 INSERT NULL
+    # 会触发 NOT NULL 约束（被误报成"代理名重复"）——修复补默认
+    row.setdefault("local_ip", "127.0.0.1")
+    row.setdefault("local_port", 0)
 
     with get_db() as conn:
         cols = ["instance_id", "name", "type", "local_ip", "local_port",
@@ -263,8 +267,12 @@ def create_proxy(instance_id, proxy_data):
                 vals,
             )
             return cur.lastrowid
-        except sqlite3.IntegrityError:
-            raise ValueError(f"代理名重复: {name}")
+        except sqlite3.IntegrityError as e:
+            # 仅真正的 UNIQUE(instance_id,name) 冲突算"代理名重复"；
+            # 其他 IntegrityError（NOT NULL/CHECK 等）还原真实原因，避免误导
+            if "UNIQUE" in str(e):
+                raise ValueError(f"代理名重复: {name}")
+            raise ValueError(f"代理数据不合法: {e}")
 
 
 def update_proxy(proxy_id, proxy_data):
