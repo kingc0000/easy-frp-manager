@@ -1,0 +1,2097 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FRP Manager v1.2.0</title>
+<link rel="stylesheet" href="/vendor/tailwind.css">
+<style>
+  :root {
+    /* 全新设计系统:微紫浅蓝底 + 白色卡片 + 大圆角 */
+    --bg:#f0f2ff;
+    --bg-grad: linear-gradient(165deg,#eef2ff 0%,#f8fafc 55%,#fdf4ff 100%);
+    --panel:#ffffff;
+    --panel-hover:#f5f6ff;
+    --border:#e6e8f4;
+    --border-strong:#d3d7ee;
+    --accent:#6366f1;
+    --accent-hover:#4f46e5;
+    --accent-soft:#eeeffe;
+    --text:#1a2035;
+    --muted:#8a91ad;
+    --muted-light:#5b6281;
+    --success:#10b981; --success-bg:#e5f8f0; --success-fg:#047857;
+    --danger:#ef4444;  --danger-bg:#feebec;  --danger-fg:#dc2626;
+    --warn:#f59e0b;    --warn-bg:#fef5e1;    --warn-fg:#b45309;
+    --info:#6366f1;    --info-bg:#eef0fe;    --info-fg:#4338ca;
+    --shadow-sm: 0 1px 3px rgba(30,40,90,.06);
+    --shadow-md: 0 6px 18px rgba(30,40,90,.08);
+    --shadow-lg: 0 14px 34px rgba(79,70,229,.15);
+    --radius: 1rem; --radius-sm: .7rem;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg-grad); background-attachment: fixed;
+    color: var(--text); font-size: .875rem; line-height: 1.55; min-height: 100vh;
+  }
+
+  /* ===== 卡片 ===== */
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow-sm);
+    transition: box-shadow .18s ease, border-color .18s ease, transform .18s ease;
+  }
+  .panel:hover { border-color: var(--border-strong); box-shadow: var(--shadow-md); }
+
+  /* ===== 按钮体系 ===== */
+  .btn-primary, .btn-danger, .btn-ghost, .btn-secondary {
+    display:inline-flex; align-items:center; justify-content:center; gap:.4rem;
+    padding:.5rem 1.05rem; border-radius:.8rem; font-weight:600; font-size:.875rem;
+    cursor:pointer; border:none; transition:all .15s ease; white-space:nowrap; line-height:1.25;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff;
+    box-shadow: 0 4px 12px rgba(99,102,241,.28);
+  }
+  .btn-primary:hover { background: linear-gradient(135deg,#4f46e5,#7c3aed); box-shadow: 0 6px 16px rgba(99,102,241,.36); transform: translateY(-1px); }
+  .btn-danger { background:#ef4444; color:#fff; box-shadow: 0 4px 10px rgba(239,68,68,.22); }
+  .btn-danger:hover { background:#dc2626; transform: translateY(-1px); }
+  .btn-ghost { background:#f6f7ff; color:var(--text); border:1px solid var(--border-strong); }
+  .btn-ghost:hover { background:#eceefc; border-color:var(--accent); color:var(--accent-hover); }
+  .btn-secondary { background:#eceefb; color:var(--text); border:1px solid var(--border-strong); }
+  .btn-secondary:hover { background:#e0e3f7; }
+  .btn-primary:disabled, .btn-danger:disabled, .btn-ghost:disabled, .btn-secondary:disabled { opacity:.5; cursor:not-allowed; pointer-events:none; }
+  .btn-sm { padding:.3rem .7rem; font-size:.78rem; border-radius:.6rem; }
+  .btn-icon { padding:.3rem .55rem; font-size:.875rem; }
+
+  /* ===== 输入框 ===== */
+  .input {
+    background:#fff; border:1.5px solid var(--border-strong); color:var(--text);
+    padding:.45rem .7rem; border-radius:.7rem; width:100%; font-size:.875rem;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  .input:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 4px rgba(99,102,241,.15); }
+  .input:disabled { opacity:.5; cursor:not-allowed; }
+  .input:invalid:not(:placeholder-shown) { border-color:var(--danger); }
+  .field-error { color:var(--danger-fg); font-size:.75rem; margin-top:.25rem; display:none; }
+  .field-error.visible { display:block; }
+  .field-hint { color:var(--muted); font-size:.75rem; margin-top:.25rem; }
+
+  /* nginx 配置预览框 */
+  .nginx-modal { max-height:92vh; overflow-y:auto; }
+  .nginx-preview-box { height:22rem; min-height:14rem; resize:vertical; overflow:auto; }
+
+  /* ===== Badge / 状态点 ===== */
+  .badge { display:inline-flex; align-items:center; gap:.3rem; padding:.18rem .6rem; border-radius:999px; font-size:.72rem; font-weight:600; line-height:1.3; }
+  .badge-green { background:var(--success-bg); color:var(--success-fg); }
+  .badge-red { background:var(--danger-bg); color:var(--danger-fg); }
+  .badge-gray { background:#eef0f6; color:var(--muted-light); }
+  .badge-blue { background:var(--info-bg); color:var(--info-fg); }
+  .badge-yellow { background:var(--warn-bg); color:var(--warn-fg); }
+  .dot { display:inline-block; width:.55rem; height:.55rem; border-radius:999px; flex-shrink:0; }
+  .dot-green { background:var(--success); box-shadow:0 0 0 3px rgba(16,185,129,.18); }
+  .dot-red { background:var(--danger); box-shadow:0 0 0 3px rgba(239,68,68,.18); }
+  .dot-gray { background:var(--muted); }
+  .dot-yellow { background:var(--warn); box-shadow:0 0 0 3px rgba(245,158,11,.18); }
+  .dot-pulse { animation:pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+
+  /* ===== 顶栏 ===== */
+  header.app-header {
+    position:sticky; top:0; z-index:40; backdrop-filter:blur(14px);
+    background: rgba(255,255,255,.82); border-bottom:1px solid var(--border);
+  }
+  .app-header-inner { max-width:80rem; margin:0 auto; padding:.8rem 1.5rem; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
+  .brand { display:flex; align-items:center; gap:.7rem; }
+  .brand-logo {
+    width:2.3rem; height:2.3rem; border-radius:.8rem; display:flex; align-items:center; justify-content:center;
+    background: linear-gradient(135deg,#6366f1,#a855f7); color:#fff; font-size:1.25rem;
+    box-shadow: 0 4px 10px rgba(99,102,241,.35);
+  }
+  .brand h1 { font-size:1.05rem; font-weight:700; margin:0; letter-spacing:.01em; }
+  .brand h1 .frp { background: linear-gradient(135deg,#6366f1,#a855f7); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .brand-sub { font-size:.72rem; color:var(--muted); margin-top:-.15rem; }
+
+  /* ===== 登录页 ===== */
+  #login-overlay {
+    position:fixed; inset:0; z-index:50; display:flex; align-items:center; justify-content:center;
+    background:
+      radial-gradient(1000px 500px at 15% -10%, rgba(99,102,241,.16), transparent 60%),
+      radial-gradient(800px 400px at 90% 110%, rgba(168,85,247,.14), transparent 60%),
+      var(--bg-grad);
+  }
+  .login-card {
+    background:rgba(255,255,255,.94); border:1px solid var(--border); border-radius:1.4rem;
+    padding:2.5rem 2.2rem; width:24rem; max-width:92%; box-shadow:var(--shadow-lg);
+    backdrop-filter: blur(8px);
+  }
+  .login-logo {
+    width:4rem; height:4rem; border-radius:1.2rem; margin:0 auto 1.1rem;
+    background: linear-gradient(135deg,#6366f1,#a855f7); display:flex; align-items:center; justify-content:center;
+    font-size:2rem; box-shadow: 0 8px 22px rgba(99,102,241,.4);
+  }
+  .login-card h2 { text-align:center; font-size:1.35rem; font-weight:800; margin:0 0 .25rem; }
+  .login-card .login-sub { text-align:center; color:var(--muted); font-size:.8rem; margin:0 0 1.6rem; }
+  .login-card label { display:block; font-size:.8rem; font-weight:600; color:var(--muted-light); margin:0 0 .35rem; }
+  .login-card .input { padding:.6rem .8rem; border-radius:.75rem; font-size:.925rem; }
+  .login-card .btn-primary { width:100%; padding:.65rem; margin-top:.4rem; font-size:.95rem; border-radius:.8rem; }
+  .login-err { margin-bottom:1rem; padding:.65rem .8rem; border-radius:.7rem; background:var(--danger-bg); border:1px solid rgba(239,68,68,.25); color:var(--danger-fg); font-size:.8rem; }
+  .login-foot { text-align:center; margin-top:1.2rem; font-size:.75rem; color:var(--muted); }
+
+  /* ===== 实例列表:统计卡 ===== */
+  .stat-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:1rem; margin-bottom:1.25rem; }
+  .stat-card { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:1rem 1.15rem; box-shadow:var(--shadow-sm); display:flex; gap:.85rem; align-items:center; }
+  .stat-card:hover { box-shadow:var(--shadow-md); border-color:var(--border-strong); }
+  .stat-icon {
+    width:2.6rem; height:2.6rem; border-radius:.85rem; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center; font-size:1.3rem;
+  }
+  .stat-icon.ic-green { background:var(--success-bg); }
+  .stat-icon.ic-violet { background:var(--info-bg); }
+  .stat-icon.ic-amber { background:var(--warn-bg); }
+  .stat-icon.ic-blue { background:#e0f2fe; }
+  .stat-label { font-size:.72rem; color:var(--muted); font-weight:600; }
+  .stat-value { font-size:1rem; font-weight:700; font-family:ui-monospace,monospace; }
+  .stat-sub { font-size:.7rem; color:var(--muted); margin-top:.1rem; }
+  .bar { height:.45rem; border-radius:999px; background:#eef0f6; overflow:hidden; margin-top:.35rem; }
+  .bar > div { height:100%; border-radius:999px; transition:width .3s; }
+
+  /* ===== 实例卡片网格 ===== */
+  .toolbar { display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin-bottom:1.1rem; }
+  .toolbar-info { font-size:.85rem; color:var(--muted-light); }
+  .toolbar-info b { color:var(--text); }
+  .toolbar-info .ok { color:var(--success-fg); font-weight:600; }
+  .inst-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(21rem,1fr)); gap:1rem; }
+  .inst-card { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow-sm); overflow:hidden; transition:all .18s ease; }
+  .inst-card:hover { transform:translateY(-2px); box-shadow:var(--shadow-md); border-color:var(--border-strong); }
+  .inst-card-head { display:flex; align-items:center; gap:.8rem; padding:1.05rem 1.15rem .75rem; }
+  .inst-icon {
+    width:2.9rem; height:2.9rem; border-radius:.95rem; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:1.45rem;
+    background: linear-gradient(135deg,#eef0fe,#fdf1fd);
+    border:1px solid rgba(99,102,241,.18);
+  }
+  .inst-icon.ic-frps { background: linear-gradient(135deg,#eef0fe,#e0f2fe); border-color:rgba(99,102,241,.25); }
+  .inst-title { flex:1; min-width:0; }
+  .inst-name { font-size:1rem; font-weight:700; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+  .inst-name a { color:inherit; text-decoration:none; cursor:pointer; display:inline-flex; align-items:center; gap:.25rem; }
+  .inst-name a:hover { color:var(--accent-hover); }
+  .inst-sub { font-size:.72rem; color:var(--muted); margin-top:.15rem; }
+  .inst-status { flex-shrink:0; display:flex; align-items:center; gap:.4rem; font-size:.78rem; font-weight:600; padding:.3rem .7rem; border-radius:999px; }
+  .st-running { background:var(--success-bg); color:var(--success-fg); }
+  .st-stopped { background:var(--danger-bg); color:var(--danger-fg); }
+  .st-unknown { background:#eef0f6; color:var(--muted-light); }
+  .inst-card-body { padding:0 1.15rem .8rem; }
+  .inst-meta { display:flex; align-items:center; gap:.9rem; flex-wrap:wrap; font-size:.76rem; color:var(--muted); border-top:1px dashed var(--border); padding-top:.7rem; }
+  .inst-actions { display:flex; gap:.45rem; flex-wrap:wrap; padding:.65rem 1.15rem 1rem; border-top:1px solid var(--border); background:#fafbff; }
+  .inst-proxies { padding:0 1.15rem .9rem; display:none; }
+  .inst-proxies.open { display:block; }
+
+  /* ===== 代理展开列表(卡片行) ===== */
+  .proxy-row {
+    display:flex; align-items:center; justify-content:space-between; gap:.75rem;
+    background:#fafbff; border:1px solid var(--border); border-radius:.85rem; padding:.7rem .9rem; margin-bottom:.55rem;
+    transition:all .15s ease;
+  }
+  .proxy-row:hover { border-color:var(--accent); background:#f3f4fe; }
+  .proxy-row .p-name { font-weight:600; font-size:.875rem; }
+  .proxy-row .p-port { font-family:ui-monospace,monospace; font-size:.8rem; color:var(--muted-light); }
+  .proxy-row .p-domains { font-size:.75rem; color:var(--muted); }
+  .proxy-row .p-actions { display:flex; gap:.4rem; flex-shrink:0; }
+
+  /* ===== 详情页 ===== */
+  .detail-head { display:flex; align-items:center; gap:.9rem; flex-wrap:wrap; margin-bottom:1.2rem; }
+  .detail-head h2 { font-size:1.35rem; font-weight:800; margin:0; }
+  .detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1rem; }
+  .card-title { font-size:.9rem; font-weight:700; margin:0 0 .7rem; display:flex; align-items:center; gap:.5rem; }
+  .card-title .tt { width:1.9rem; height:1.9rem; border-radius:.6rem; display:flex; align-items:center; justify-content:center; font-size:1rem; background:var(--accent-soft); }
+  .info-table { width:100%; font-size:.85rem; border-collapse:collapse; }
+  .info-table td { padding:.45rem .4rem; border-bottom:1px solid var(--border); vertical-align:middle; }
+  .info-table td:first-child { color:var(--muted); width:6.5rem; font-size:.78rem; }
+  .info-table tr:last-child td { border-bottom:none; }
+
+  /* ===== 表格(代理列表/frps 状态) ===== */
+  .data-table-wrap { overflow-x:auto; border-radius:var(--radius-sm); border:1px solid var(--border); }
+  table.data-table { width:100%; border-collapse:collapse; min-width:640px; }
+  .data-table th { text-align:left; padding:.6rem .8rem; border-bottom:1px solid var(--border); background:#fafbff; color:var(--muted-light); font-weight:600; font-size:.73rem; white-space:nowrap; }
+  .data-table td { padding:.6rem .8rem; border-bottom:1px solid var(--border); font-size:.85rem; vertical-align:middle; }
+  .data-table tbody tr { transition:background .12s ease; }
+  .data-table tbody tr:hover { background:var(--accent-soft); }
+  .data-table tbody tr:last-child td { border-bottom:none; }
+  .data-table code { background:transparent; padding:0; }
+
+  /* ===== 代码块 ===== */
+  code { background:#eef0f6; padding:.1rem .35rem; border-radius:.3rem; font-size:.83rem; color:var(--info-fg); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre.code-block { background:#0f172a; color:#a5f3fc; border-radius:var(--radius-sm); padding:.9rem 1.1rem; overflow-x:auto; font-size:.8rem; line-height:1.6; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre.code-block code { background:transparent; padding:0; color:inherit; }
+
+  /* ===== 模态框 ===== */
+  .modal-overlay {
+    position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center;
+    background:rgba(30,40,90,.42); backdrop-filter:blur(4px); padding:1rem;
+  }
+  .modal-overlay.hidden { display:none; }
+  .modal-card { background:var(--panel); border-radius:1.2rem; box-shadow:var(--shadow-lg); max-width:100%; overflow:visible; }
+  .modal-head { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:1.15rem 1.4rem; border-bottom:1px solid var(--border); }
+  .modal-head h3 { font-size:1.05rem; font-weight:700; margin:0; display:flex; align-items:center; gap:.5rem; }
+  .modal-close { background:none; border:none; font-size:1.4rem; color:var(--muted); cursor:pointer; line-height:1; padding:.2rem .4rem; border-radius:.5rem; }
+  .modal-close:hover { color:var(--text); background:#eef0f6; }
+  .modal-body { padding:1.2rem 1.4rem; overflow-y:auto; }
+  .modal-foot { display:flex; justify-content:flex-end; gap:.6rem; padding:1rem 1.4rem; border-top:1px solid var(--border); background:#fafbff; border-radius:0 0 1.2rem 1.2rem; }
+
+  /* ===== 表单区块(新建实例等) ===== */
+  .form-sec { border:1px solid var(--border); border-radius:var(--radius-sm); padding:.9rem 1rem; margin-bottom:.9rem; background:#fbfcff; }
+  .form-sec-title { font-size:.85rem; font-weight:700; margin:0 0 .6rem; display:flex; align-items:center; justify-content:space-between; }
+  /* <summary> 折叠标题:浏览器默认展开箭头也是 flex 项,space-between 会把箭头推到最左、文字最右,间距过大;
+     这里覆盖为 flex-start + 小 gap,让箭头紧贴文字;仍保留 ::marker 颜色跟随主题 */
+  summary.form-sec-title { justify-content:flex-start; gap:.45rem; cursor:pointer; list-style:none; }
+  summary.form-sec-title::-webkit-details-marker { display:none; }
+  summary.form-sec-title::before { content:"▸"; display:inline-block; transition:transform .18s; font-size:.72rem; color:var(--muted); }
+  details[open] > summary.form-sec-title::before { transform:rotate(90deg); }
+  .info-note { border-radius:.8rem; padding:.8rem .95rem; font-size:.82rem; margin-bottom:1rem; }
+  .info-note.blue { background:var(--info-bg); border:1px solid rgba(99,102,241,.3); color:var(--info-fg); }
+  .info-note.green { background:var(--success-bg); border:1px solid rgba(16,185,129,.3); color:var(--success-fg); }
+  .info-note.yellow { background:var(--warn-bg); border:1px solid rgba(245,158,11,.3); color:var(--warn-fg); }
+  .info-note.red { background:var(--danger-bg); border:1px solid rgba(239,68,68,.3); color:var(--danger-fg); }
+  .info-note b { font-weight:700; }
+  .form-label { display:block; font-size:.8rem; font-weight:600; color:var(--muted-light); margin-bottom:.3rem; }
+  .form-hint { font-size:.73rem; color:var(--muted); margin-top:.25rem; }
+  .form-grid2 { display:grid; grid-template-columns:1fr 1fr; gap:.9rem; }
+
+  /* ===== Toast ===== */
+  #toast-container { position:fixed; bottom:1.2rem; right:1.2rem; z-index:100; display:flex; flex-direction:column; gap:.55rem; }
+  .toast {
+    padding:.8rem 1.1rem; border-radius:.9rem; color:#fff; font-size:.85rem; min-width:220px;
+    box-shadow:var(--shadow-lg); animation:slideIn .28s ease; display:flex; align-items:center; gap:.55rem;
+    border-left:5px solid rgba(255,255,255,.35);
+  }
+  .toast-success { background:linear-gradient(135deg,#059669,#10b981); }
+  .toast-error { background:linear-gradient(135deg,#dc2626,#ef4444); }
+  .toast-info { background:linear-gradient(135deg,#4338ca,#6366f1); }
+  @keyframes slideIn { from { transform:translateX(24px); opacity:0; } to { transform:translateX(0); opacity:1; } }
+
+  /* ===== 加载蒙版 ===== */
+  #busy-overlay { position:fixed; inset:0; z-index:70; background:rgba(244,246,255,.55); backdrop-filter:blur(3px); display:none; align-items:center; justify-content:center; }
+  #busy-overlay.active { display:flex; }
+  .busy-box { display:flex; flex-direction:column; align-items:center; gap:.9rem; padding:1.4rem 2rem; background:#fff; border:1px solid var(--border-strong); border-radius:1.1rem; box-shadow:var(--shadow-lg); }
+  .busy-box .spinner { width:1.9rem; height:1.9rem; border-width:3px; border-color:var(--accent); border-top-color:transparent; }
+  .busy-box .busy-msg { color:var(--text); font-size:.875rem; font-weight:600; }
+
+  /* ===== 加载转圈 / Skeleton ===== */
+  .spinner { display:inline-block; width:1rem; height:1rem; border:2.5px solid #d6d9fd; border-top-color:transparent; border-radius:50%; animation:spin .6s linear infinite; }
+  .spinner-blue { border-color:var(--accent); border-top-color:transparent; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .skeleton { background:linear-gradient(90deg,#e9ebf7 25%,#f5f6fe 50%,#e9ebf7 75%); background-size:200% 100%; animation:shimmer 1.5s ease-in-out infinite; border-radius:.45rem; color:transparent; }
+  .skeleton-text { height:.9rem; margin-bottom:.55rem; }
+  .skeleton-block { height:3rem; margin-bottom:.8rem; }
+
+  /* ===== 空状态 ===== */
+  .empty-state { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:3.2rem 1rem; color:var(--muted); text-align:center; gap:.8rem; }
+  .empty-state-icon { font-size:3rem; opacity:.55; }
+  .empty-state-title { font-size:.95rem; font-weight:700; color:var(--text); }
+  .empty-state-desc { font-size:.78rem; max-width:24rem; }
+  .empty-state-action { margin-top:.6rem; }
+
+  /* ===== 响应式 ===== */
+  @media (max-width:900px) {
+    .stat-grid { grid-template-columns:repeat(2,1fr); }
+    .detail-grid { grid-template-columns:1fr; }
+    .form-grid2 { grid-template-columns:1fr; }
+  }
+  @media (max-width:600px) {
+    .inst-grid { grid-template-columns:1fr; }
+    .stat-grid { grid-template-columns:1fr 1fr; }
+    .app-header-inner { padding:.7rem .9rem; }
+    main { padding:.8rem .9rem !important; }
+    .toast { min-width:0; }
+  }
+
+  /* 工具类 */
+  .truncate-cell { max-width:12rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .truncate-wide { max-width:20rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .truncate-cell[title], .truncate-wide[title] { cursor:help; }
+  .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .f1 { flex:1; min-width:0; }
+  .hidden { display:none !important; }
+
+  /* 通用工具类(旧模板偶有引用) */
+  .flex { display:flex; }
+  .items-center { align-items:center; }
+  .gap-2 { gap:.5rem; }
+  .flex-wrap { flex-wrap:wrap; }
+  .mb-2 { margin-bottom:.5rem; }
+  .p-4 { padding:1rem; }
+</style>
+</head>
+<body class="min-h-screen">
+<!-- 登录页 -->
+<div id="login-overlay" style="display:none;">
+  <div class="login-card">
+    <div class="login-logo">🚀</div>
+    <h2>FRP Manager</h2>
+    <p class="login-sub">内网穿透 · 一屏管理</p>
+    <div id="login-error" class="login-err hidden"></div>
+    <form onsubmit="doLogin(event)">
+      <label for="login-username">用户名</label>
+      <input type="text" id="login-username" class="input" value="admin" required autofocus>
+      <div style="height:.8rem"></div>
+      <label for="login-password">密码</label>
+      <input type="password" id="login-password" class="input" required>
+      <button type="submit" class="btn-primary">登 录</button>
+    </form>
+    <p class="login-foot">
+      <a href="javascript:void(0)" onclick="showForgotPasswordModal()" style="color:var(--info-fg);text-decoration:none;border-bottom:1px dashed var(--border-strong);">忘记密码？点击这里查看恢复步骤</a>
+    </p>
+  </div>
+</div>
+
+<div id="app">
+  <!-- 顶栏 -->
+  <header class="app-header">
+    <div class="app-header-inner">
+      <div class="brand">
+        <div class="brand-logo">🚀</div>
+        <div>
+          <h1><span class="frp">FRP</span> Manager</h1>
+          <div class="brand-sub"><span id="host-info"></span></div>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 hidden" id="user-info"></div>
+    </div>
+  </header>
+
+  <main class="p-6" style="max-width:80rem;margin:0 auto;padding:1.6rem 1.5rem 3rem;">
+    <!-- 实例管理页 -->
+    <div id="view-instances"></div>
+    <!-- 实例详情页 -->
+    <div id="view-detail" class="hidden"></div>
+  </main>
+
+  <!-- 操作加载蒙版 -->
+  <div id="busy-overlay">
+    <div class="busy-box">
+      <span class="spinner"></span>
+      <span class="busy-msg" id="busy-msg">正在处理...</span>
+    </div>
+  </div>
+</div>
+
+<!-- 模态框容器 -->
+<div id="modal-container" class="modal-overlay hidden"></div>
+<!-- Toast 容器 -->
+<div id="toast-container"></div>
+
+<script>
+// ============ 登录相关 ============
+function showLogin(message) {
+  authToken = '';
+  localStorage.removeItem('frpm_token');
+  localStorage.removeItem('frpm_username');
+  // 重置登录表单(防止上次成功登录后按钮残留 disabled 状态)
+  const btn = document.getElementById('login-overlay').querySelector('button[type="submit"]');
+  if (btn) { btn.disabled = false; btn.textContent = '登录'; }
+  document.getElementById('login-password').value = '';
+  const overlay = document.getElementById('login-overlay');
+  if (overlay) {
+    overlay.style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
+  }
+  const err = document.getElementById('login-error');
+  if (err) {
+    if (message) {
+      err.textContent = message;
+      err.classList.remove('hidden');
+    } else {
+      err.classList.add('hidden');
+    }
+  }
+}
+
+function hideLogin() {
+  const overlay = document.getElementById('login-overlay');
+  if (overlay) overlay.style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+}
+
+async function doLogin(event) {
+  event.preventDefault();
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  errEl.classList.add('hidden');
+  const btn = event.target.querySelector('button');
+  btn.disabled = true;
+  btn.textContent = '登录中...';
+  try {
+    const resp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username, password}),
+    });
+    const data = await resp.json().catch(()=>({}));
+    if (!resp.ok) {
+      errEl.textContent = data.error || '登录失败';
+      errEl.classList.remove('hidden');
+      btn.disabled = false;
+      btn.textContent = '登录';
+      return;
+    }
+    authToken = data.token;
+    currentUsername = data.username;
+    localStorage.setItem('frpm_token', data.token);
+    localStorage.setItem('frpm_username', data.username);
+    hideLogin();
+    toast('登录成功,欢迎 ' + data.username, 'success');
+    renderUserInfo();
+    // 登录成功后立刻显示实例列表(不等 dashboard 慢请求)
+    nav('instances');
+    // 后台加载 dashboard 状态条数据，完成后刷新实例列表以显示主机信息
+    loadDashboard().then(() => {
+      if (currentView === 'instances') loadInstances();
+    });
+  } catch(e) {
+    errEl.textContent = e.message || '网络错误';
+    errEl.classList.remove('hidden');
+    btn.disabled = false;
+    btn.textContent = '登录';
+  }
+}
+
+async function doLogout() {
+  if (!confirm('确定要退出登录吗?')) return;
+  try {
+    await fetch('/api/auth/logout', {method: 'POST', headers: {'Content-Type':'application/json'}}).catch(()=>{});
+  } catch(e) {}
+  showLogin('已退出登录');
+}
+
+// ============ 忘记密码:提示恢复步骤 ============
+// 不提供"一键重置"按钮——那等于给任何能打开登录页的人接管实例的权限。
+// 重置必须由管理员在服务器本机上手动执行(有 shell 访问权限的人才有资格)。
+// 这里只展示步骤,不执行任何操作。
+function showForgotPasswordModal() {
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-card" style="width:38rem;max-width:100%;">
+      <div class="modal-head">
+        <h3>🔑 忘记密码？</h3>
+        <button onclick="closeModal()" class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body" style="max-height:78vh;overflow-y:auto;">
+        <div class="info-note yellow">
+          ⚠️ 出于安全考虑,面板不提供一键重置密码的按钮(否则任何能打开登录页的人都能接管实例)。
+          重置必须由管理员在 <b>frpm 所在服务器本机</b> 手动执行。
+        </div>
+        <p style="font-size:.85rem;color:var(--muted-light);margin:0 0 .6rem;">在服务器上 SSH 登录后,执行下面任一命令:</p>
+
+        <div style="margin-bottom:.9rem;">
+          <p style="font-size:.78rem;color:var(--muted);margin:0 0 .3rem;">方式 1:删凭证文件 + 重启容器(推荐,最简单)</p>
+          <pre class="code-block" style="margin:0;">docker exec frpm rm -f /data/frpm-configs/auth.json &amp;&amp; docker restart frpm</pre>
+        </div>
+
+        <div style="margin-bottom:.9rem;">
+          <p style="font-size:.78rem;color:var(--muted);margin:0 0 .3rem;">方式 2:让程序自己生成默认凭证(等效)</p>
+          <pre class="code-block" style="margin:0;">docker exec frpm python3 -c "import auth; print(auth.reset_auth_config())"</pre>
+        </div>
+
+        <p style="font-size:.85rem;margin:0 0 1rem;">执行后用默认账号登录:<br>
+          用户名 <code>admin</code> / 密码 <code>admin123</code><br>
+          登录成功后请立刻在右上角「账户设置」里改回你自己的密码。
+        </p>
+
+        <p style="font-size:.75rem;color:var(--muted);margin:0;line-height:1.6;">
+          前提:容器需要把 <code>/data/frpm-configs</code> 挂载到宿主机(用官方 deploy-docker.sh 部署会自动带上)。
+          如果用的是 Docker UI 手动部署、且没挂这个目录,那凭证本来就存在容器里,删容器后会自动回到默认值。
+        </p>
+      </div>
+      <div class="modal-foot">
+        <button onclick="closeModal()" class="btn-ghost">知道了</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('modal-container').classList.remove('hidden');
+}
+
+async function checkAuth() {
+  if (!authToken) { showLogin(); return; }
+  try {
+    const resp = await fetch('/api/auth/check', {headers: {'Authorization':'Bearer '+authToken}});
+    const data = await resp.json();
+    if (!data.authenticated) {
+      showLogin();
+      return;
+    }
+    currentUsername = data.username || currentUsername;
+    localStorage.setItem('frpm_username', currentUsername);
+    hideLogin();
+  } catch(e) {
+    showLogin();
+  }
+}
+
+// 在顶栏显示用户名和退出按钮
+function renderUserInfo() {
+  if (!currentUsername) return;
+  const hostEl = document.getElementById('user-info');
+  if (!hostEl) return;
+  hostEl.classList.remove('hidden');
+  hostEl.innerHTML = '<div style="display:flex;align-items:center;gap:.55rem;font-size:.85rem;">'
+    + '<div style="width:2rem;height:2rem;border-radius:50%;background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.8rem;">' + escapeHtml((currentUsername||'?')[0].toUpperCase()) + '</div>'
+    + '<span style="font-weight:600;">' + escapeHtml(currentUsername) + '</span>'
+    + '<button onclick="showChangePasswordModal()" class="btn-ghost btn-sm">账户设置</button>'
+    + '<button onclick="doLogout()" class="btn-ghost btn-sm" style="color:var(--danger-fg)">退出</button>'
+    + '</div>';
+}
+
+window.addEventListener('DOMContentLoaded', async () => {
+  // 先清空任何残留的错误消息
+  const loginErr = document.getElementById('login-error');
+  if (loginErr) loginErr.classList.add('hidden');
+
+  await checkAuth();
+  if (authToken) {
+    renderUserInfo();
+    // 先立即显示实例列表(避免等待 dashboard 时页面空白)
+    nav('instances');
+    // 后台加载 dashboard 状态条数据，完成后更新实例列表的状态条
+    loadDashboard().then(() => {
+      // 如果还在 instances 视图，刷新实例列表以显示最新状态条
+      if (currentView === 'instances') loadInstances();
+    });
+  }
+});
+
+// ============ 账户设置:改用户名 / 改密码 ============
+// 两个区块各自独立提交,互不影响。共用"当前密码"作认证闸门——
+// 改用户名要验证当前密码(要改的正是用户名本身),改密码同样。
+function showChangePasswordModal() {
+  const modal = document.getElementById('modal-container');
+  if (!modal) return;
+  modal.innerHTML = `
+    <div class="modal-card" style="width:30rem;max-width:100%;">
+      <div class="modal-head">
+        <h3>⚙️ 账户设置</h3>
+        <button onclick="closeModal()" class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body" style="max-height:82vh;overflow-y:auto;">
+        <p style="font-size:.82rem;color:var(--muted);margin:0 0 1rem;">当前账号:<code>${escapeHtml(currentUsername)}</code></p>
+        <div id="ac-error" class="info-note red hidden"></div>
+
+        <div style="margin-bottom:1.2rem;padding-bottom:1.2rem;border-bottom:1px solid var(--border);">
+          <h4 style="font-size:.9rem;font-weight:700;margin:0 0 .8rem;">🔑 修改用户名</h4>
+          <div style="margin-bottom:.7rem;">
+            <label class="form-label">新用户名</label>
+            <input type="text" id="cu-new" class="input" minlength="3" maxlength="32" pattern="[A-Za-z0-9_\\-]+" required>
+            <p class="form-hint">3-32 位,只能含字母、数字、下划线、连字符</p>
+          </div>
+          <div style="margin-bottom:.7rem;">
+            <label class="form-label">当前密码(验证用)</label>
+            <input type="password" id="cu-old" class="input" required>
+            <p class="form-hint">验证你是本人,防止未授权改账号</p>
+          </div>
+          <button type="button" onclick="doChangeUsername()" class="btn-primary" style="width:100%">保存用户名</button>
+        </div>
+
+        <div>
+          <h4 style="font-size:.9rem;font-weight:700;margin:0 0 .8rem;">🔒 修改密码</h4>
+          <div style="margin-bottom:.7rem;">
+            <label class="form-label">当前密码</label>
+            <input type="password" id="cp-old" class="input" required>
+          </div>
+          <div style="margin-bottom:.7rem;">
+            <label class="form-label">新密码(至少 6 位)</label>
+            <input type="password" id="cp-new" class="input" minlength="6" required>
+          </div>
+          <div style="margin-bottom:.7rem;">
+            <label class="form-label">确认新密码</label>
+            <input type="password" id="cp-confirm" class="input" minlength="6" required>
+          </div>
+          <button type="button" onclick="doChangePasswordSubmit()" class="btn-primary" style="width:100%">保存密码</button>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" onclick="closeModal()" class="btn-ghost">关闭</button>
+      </div>
+    </div>
+  `;
+  modal.classList.remove('hidden');
+}
+
+async function doChangePassword(event) {
+  if (!event) return;  // 保留签名兼容,实际逻辑在 doChangePasswordSubmit
+  event.preventDefault();
+  return doChangePasswordSubmit();
+}
+
+async function doChangeUsername() {
+  const newUsername = document.getElementById('cu-new').value.trim();
+  const oldPassword = document.getElementById('cu-old').value;
+  const errEl = document.getElementById('ac-error');
+  errEl.classList.add('hidden');
+  try {
+    const data = await api('/api/auth/change-username', {
+      method: 'POST',
+      body: JSON.stringify({ new_username: newUsername, old_password: oldPassword }),
+      busy: '正在修改用户名...',
+    });
+    toast('用户名已修改,请重新登录', 'success');
+    closeModal();
+    setTimeout(() => doLogout(), 1500);
+  } catch(e) {
+    errEl.textContent = e.message || '修改失败';
+    errEl.classList.remove('hidden');
+  }
+}
+
+async function doChangePasswordSubmit() {
+  const oldPassword = document.getElementById('cp-old').value;
+  const newPassword = document.getElementById('cp-new').value;
+  const confirmPassword = document.getElementById('cp-confirm').value;
+  const errEl = document.getElementById('ac-error');
+  errEl.classList.add('hidden');
+  if (newPassword !== confirmPassword) {
+    errEl.textContent = '两次输入的新密码不一致';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  try {
+    await api('/api/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ old_password: oldPassword, new_password: newPassword, confirm_password: confirmPassword }),
+      busy: '正在修改密码...',
+    });
+    toast('密码修改成功,请重新登录', 'success');
+    closeModal();
+    // 修改密码后会话失效,自动登出
+    setTimeout(() => doLogout(), 1500);
+  } catch(e) {
+    errEl.textContent = e.message || '修改失败';
+    errEl.classList.remove('hidden');
+  }
+}
+
+// ============ 全局状态 ============
+let currentView = 'dashboard';
+let dashboardData = null;
+let instancesCache = [];
+let logStream = null;
+let authToken = localStorage.getItem('frpm_token') || '';
+let currentUsername = localStorage.getItem('frpm_username') || '';
+
+// ============ 工具函数 ============
+async function api(url, options={}) {
+  const headers = { 'Content-Type': 'application/json' };
+  // 自动附加认证 token
+  if (authToken) {
+    headers['Authorization'] = 'Bearer ' + authToken;
+  }
+  // busy:true 的操作类请求自动盖加载蒙版(防重复点击 + 告知用户);
+  // 传自定义文案用 busy:'正在重启实例 nas-web...'
+  const busyOpt = options.busy;
+  const showBusyOpt = busyOpt === true || typeof busyOpt === 'string';
+  if (showBusyOpt) showBusy(typeof busyOpt === 'string' ? busyOpt : '正在处理...');
+  const opts = { ...options, headers: { ...headers, ...(options.headers || {}) } };
+  delete opts.busy;
+  try {
+    const resp = await fetch(url, opts);
+    // 401:会话已过期/未登录 —— 清 token,跳登录,并抛错让调用方停止后续操作
+    if (resp.status === 401) {
+      localStorage.removeItem('frpm_token');
+      authToken = '';
+      showLogin('');  // 不显示错误消息,直接显示登录页
+      const err = new Error('会话已过期,请重新登录');
+      err.authExpired = true;  // 标记,调用方据此跳过 toast
+      throw err;
+    }
+    const data = await resp.json().catch(() => ({}));
+    // 409 Conflict:仅当响应体明确带 exists 标志(nginx 覆盖保护)时返回给调用方处理,
+    // 其余 409(实例名重复等)仍 throw 走统一错误提示
+    if (resp.status === 409 && data.exists) {
+      return data;
+    }
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    return data;
+  } finally {
+    if (showBusyOpt) hideBusy();
+  }
+}
+
+// ============ 操作加载蒙版 ============
+// 点击 启动/停止/重启/删除/保存 等耗时操作时,盖住页面防止重复点击,并显示正在做什么。
+let busyCount = 0;
+function showBusy(msg) {
+  busyCount++;
+  if (busyCount === 1) {
+    document.getElementById('busy-msg').textContent = msg || '正在处理...';
+    document.getElementById('busy-overlay').classList.add('active');
+  }
+}
+function hideBusy() {
+  busyCount = Math.max(0, busyCount - 1);
+  if (busyCount === 0) {
+    document.getElementById('busy-overlay').classList.remove('active');
+  }
+}
+
+// 全局兜底:未捕获的 promise rejection(裸 await api(...) 调用点),
+// 401 静默(已跳登录);其他错误只在控制台警告,不打扰用户。
+window.addEventListener('unhandledrejection', (event) => {
+  const err = event.reason;
+  if (err && err.authExpired) {
+    event.preventDefault();
+    return;
+  }
+  if (err && err.message) {
+    console.warn('未处理的 API 错误:', err.message);
+  }
+});
+
+function toast(msg, type='info') {
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024; const sizes = ['B','KB','MB','GB','TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
+}
+
+function formatUptime(s) {
+  if (!s) return '-';
+  const d = Math.floor(s/86400), h = Math.floor((s%86400)/3600), m = Math.floor((s%3600)/60);
+  if (d) return `${d}天${h}小时`;
+  if (h) return `${h}小时${m}分`;
+  return `${m}分钟`;
+}
+
+function timeAgo(ts) {
+  if (!ts) return '-';
+  const diff = Date.now()/1000 - ts;
+  if (diff < 60) return `${Math.floor(diff)}秒前`;
+  if (diff < 3600) return `${Math.floor(diff/60)}分钟前`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}小时前`;
+  return `${Math.floor(diff/86400)}天前`;
+}
+
+// ============ 导航 ============
+function nav(view) {
+  currentView = view;
+  ['dashboard','instances','detail'].forEach(v => {
+    const el = document.getElementById(`view-${v}`);
+    if (el) el.classList.add('hidden');
+  });
+  const target = document.getElementById(`view-${view}`);
+  if (target) target.classList.remove('hidden');
+  ['dashboard','instances'].forEach(v => {
+    const el = document.getElementById(`nav-${v}`);
+    if (!el) return;
+    el.className = (v === view)
+      ? 'px-3 py-1.5 rounded tab-active'
+      : 'px-3 py-1.5 rounded tab-inactive';
+  });
+  if (view === 'instances') loadInstances();
+  if (logStream) { logStream.close(); logStream = null; }
+}
+
+// ============ 系统/frp 状态(供实例列表顶部状态条使用) ============
+async function loadDashboard() {
+  try {
+    dashboardData = await api('/api/dashboard');
+  } catch (e) {
+    dashboardData = null;
+    console.warn('加载系统状态失败:', e.message);
+  }
+}
+
+async function refreshAll() {
+  await loadDashboard();
+  await loadInstances();
+}
+
+// ============ 实例列表 ============
+async function loadInstances() {
+  try {
+    instancesCache = await api('/api/instances');
+    renderInstances();
+  } catch (e) {
+    if (e && e.authExpired) return;
+    document.getElementById('view-instances').innerHTML = `<div style="color:var(--danger-fg);padding:1rem;">加载失败: ${e.message}</div>`;
+  }
+}
+
+function renderInstances() {
+  const frpInfo = dashboardData?.frp || {};
+  const sys = dashboardData?.system || {};
+  const mem = sys.memory || {};
+  const disk = sys.disk || {};
+  const load = (sys.load_avg || []).map(x => (+x).toFixed(2)).join(' / ');
+  const memPctInt = Math.round(mem.percent || 0);
+  const diskPctInt = Math.round(disk.percent || 0);
+  const memBar = memPctInt > 80 ? 'var(--danger)' : memPctInt > 60 ? 'var(--warn)' : 'var(--success)';
+  const diskBar = diskPctInt > 80 ? 'var(--danger)' : diskPctInt > 60 ? 'var(--warn)' : 'var(--success)';
+
+  // 顶部状态条:4 张彩色统计卡
+  const statusBar = `
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-icon ic-violet">🖥️</div>
+        <div class="f1">
+          <div class="stat-label">主机</div>
+          <div class="stat-value">${escapeHtml(sys.hostname || '-')}</div>
+          <div class="stat-sub">运行 ${formatUptime(sys.uptime_seconds)} · ${sys.cpu_count || '-'} 核</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon ic-blue">⚡</div>
+        <div class="f1">
+          <div class="stat-label">CPU 负载</div>
+          <div class="stat-value">${load || '-'}</div>
+          <div class="stat-sub">Docker ${frpInfo.docker_available ? '<span style="color:var(--success-fg)">✓ v' + escapeHtml(frpInfo.docker_version) + '</span>' : '<span style="color:var(--danger-fg)">✗ 不可用</span>'}</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon ic-green">🧠</div>
+        <div class="f1">
+          <div class="stat-label">内存 ${memPctInt}%</div>
+          <div class="bar"><div style="width:${memPctInt}%;background:${memBar}"></div></div>
+          <div class="stat-sub">${formatBytes(mem.used)} / ${formatBytes(mem.total)}</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon ic-amber">💾</div>
+        <div class="f1">
+          <div class="stat-label">磁盘 ${diskPctInt}%</div>
+          <div class="bar"><div style="width:${diskPctInt}%;background:${diskBar}"></div></div>
+          <div class="stat-sub">${formatBytes(disk.used)} / ${formatBytes(disk.total)}</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // 空状态
+  const emptyState = `
+    <div class="panel">
+      <div class="empty-state">
+        <div class="empty-state-icon">📡</div>
+        <div class="empty-state-title">还没有实例</div>
+        <div class="empty-state-desc">实例是 frps/frpc 的运行载体。创建一个实例，frpm 会自动生成配置并启动进程。</div>
+        <button onclick="showNewInstanceModal()" class="btn-primary empty-state-action">+ 新建实例</button>
+      </div>
+    </div>
+  `;
+
+  let html = `${statusBar}`;
+  if (instancesCache.length === 0) {
+    html += emptyState;
+  } else {
+    const runningCount = instancesCache.filter(i => i.status?.running).length;
+    html += `
+      <div class="toolbar">
+        <div class="toolbar-info">
+          共 <b>${instancesCache.length}</b> 个实例
+          <span class="ok">· ${runningCount} 个运行中</span>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="showNewInstanceModal()" class="btn-primary btn-sm">+ 新建实例</button>
+          <button onclick="refreshAll()" class="btn-ghost btn-sm">🔄 刷新</button>
+        </div>
+      </div>
+      <div class="inst-grid">
+        ${instancesCache.map(i => {
+          const running = i.status?.running;
+          const icon = i.type === 'frps' ? '🖥️' : '🔗';
+          const stClass = running ? 'st-running' : (i.status?.status ? 'st-stopped' : 'st-unknown');
+          const stText = running ? '运行中' : (i.status?.status || '未启动');
+          const dotClass = running ? 'dot-green dot-pulse' : (i.status?.status ? 'dot-red' : 'dot-gray');
+          return `
+        <div class="inst-card">
+          <div class="inst-card-head">
+            <div class="inst-icon ${i.type==='frps'?'ic-frps':''}">${icon}</div>
+            <div class="inst-title">
+              <div class="inst-name">
+                ${i.type==='frpc' ? `<a href="javascript:void(0)" onclick="toggleInstanceProxies(${i.id}, this)"><span style="font-size:.65rem;color:var(--muted)">▼</span>${escapeHtml(i.name)}</a>` : escapeHtml(i.name)}
+                <span class="badge ${i.type==='frps'?'badge-blue':'badge-gray'}">${i.type}</span>
+              </div>
+              <div class="inst-sub">更新于 ${timeAgo(i.updated_at)} · 配置 ${i.config_exists ? '✓' : '✗'}</div>
+            </div>
+            <div class="inst-status ${stClass}"><span class="dot ${dotClass}"></span>${stText}</div>
+          </div>
+          ${i.type==='frpc' ? `<div class="inst-proxies" id="proxies-${i.id}"><div id="proxies-content-${i.id}" style="color:var(--muted);font-size:.8rem;padding:.4rem 0;">加载中...</div></div>` : ''}
+          <div class="inst-actions">
+            <button class="btn-ghost btn-sm" onclick="showDetail(${i.id})">详情</button>
+            ${!running ? `<button class="btn-ghost btn-sm" style="color:var(--success-fg)" onclick="startInstance(${i.id})">启动</button>` : ''}
+            ${running ? `<button class="btn-ghost btn-sm" style="color:var(--warn-fg)" onclick="stopInstance(${i.id})">停止</button>` : ''}
+            <button class="btn-ghost btn-sm" onclick="restartInstance(${i.id})">重启</button>
+            ${i.type==='frpc' ? `<button class="btn-ghost btn-sm" style="color:var(--info-fg)" onclick="showNewProxyModal(${i.id})">+ 端口</button>` : ''}
+            <button class="btn-ghost btn-sm" style="color:var(--danger-fg)" onclick="deleteInstance(${i.id})">删除</button>
+          </div>
+        </div>
+        `;
+        }).join('')}
+      </div>
+    `;
+  }
+  document.getElementById('view-instances').innerHTML = html;
+  const hi = document.getElementById('host-info');
+  if (hi) hi.textContent = `@ ${sys.hostname || ''}`.trim();
+}
+
+function showNewInstanceModal() {
+  newInstanceState = {
+    type: 'frpc',
+    deploy_mode: 'binary',
+    servers: [{ name: 'default', serverAddr: '', serverPort: 2005, token: '' }],
+    proxies: [{ name: 'nas-web', type: 'http', local_ip: '127.0.0.1', local_port: 8080, custom_domains: ['vault.example.com'], subdomain: '' }]
+  };
+  renderNewInstanceModal();
+}
+
+function renderNewInstanceModal() {
+  const { type } = newInstanceState;
+
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-card" style="width:50rem;max-width:100%;">
+      <div class="modal-head">
+        <h3>✨ 新建实例</h3>
+        <button onclick="closeModal()" class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body" style="max-height:78vh;overflow-y:auto;">
+        <form id="newInstanceForm">
+          <div class="form-grid2" style="margin-bottom:1rem;">
+            <div>
+              <label class="form-label">实例名 <span style="color:var(--danger-fg)">*</span></label>
+              <input type="text" name="name" required pattern="^[a-z][a-z0-9-]{2,30}$" class="input">
+              <p class="form-hint">小写字母开头,可用小写字母数字和连字符</p>
+            </div>
+            <div>
+              <label class="form-label">实例类型 <span style="color:var(--danger-fg)">*</span></label>
+              <select name="type" class="input" onchange="onTypeChange(this.value)">
+                <option value="frpc" ${type==='frpc'?'selected':''}>frpc (客户端)</option>
+                <option value="frps" ${type==='frps'?'selected':''}>frps (服务端)</option>
+              </select>
+            </div>
+          </div>
+          <div id="config-fields"></div>
+        </form>
+      </div>
+      <div class="modal-foot">
+        <button type="button" onclick="closeModal()" class="btn-ghost">取消</button>
+        <button type="submit" class="btn-primary" form="newInstanceForm">创建实例</button>
+      </div>
+    </div>
+  `;
+
+  renderConfigFields();
+  document.getElementById('modal-container').classList.remove('hidden');
+
+  document.getElementById('newInstanceForm').addEventListener('submit', submitNewInstance);
+}
+
+function renderConfigFields() {
+  const { type } = newInstanceState;
+  let html = '';
+
+  if (type === 'frps') {
+    html = `
+      <div class="info-note blue">
+        <b>这是什么?</b> frps 是服务端,跑在有公网 IP 的机器上(比如云主机)。
+        它监听一个端口,等待 NAS 上的 frpc 连过来,然后把公网请求转发给 NAS。
+        <br><br>
+        <b>简单理解:</b> frps = 一个"中转站",帮没有公网 IP 的 NAS 把服务暴露到公网。
+      </div>
+      <h4 style="font-size:.9rem;font-weight:700;margin:0 0 .8rem;color:var(--info-fg)">🖥️ 服务端配置 (frps)</h4>
+      <div class="form-grid2" style="margin-bottom:.8rem;">
+        <div>
+          <label class="form-label">监听地址 (bindAddr)</label>
+          <input type="text" name="bind_addr" value="0.0.0.0" class="input">
+          <p class="form-hint">固定填 <code>0.0.0.0</code>,表示监听所有网卡</p>
+        </div>
+        <div>
+          <label class="form-label">监听端口 (bindPort) <span style="color:var(--danger-fg)">*</span></label>
+          <input type="number" name="bind_port" value="2005" min="1" max="65535" class="input">
+          <p class="form-hint">frpc 连接此端口。注意:需要在安全组放行此端口</p>
+        </div>
+      </div>
+      <div class="form-grid2" style="margin-bottom:.8rem;">
+        <div>
+          <label class="form-label">HTTP 虚拟端口 (vhostHTTPPort)</label>
+          <input type="number" name="vhost_http_port" value="2006" min="1" max="65535" class="input">
+          <p class="form-hint" style="line-height:1.7;">
+            <b>作用:</b> frps 接收「http 类型代理」流量的端口。访问链路:
+            <code>浏览器 → nginx(443) → 本端口(2006) → frps 按域名(Host 头)路由 → 对应 frpc 代理</code>。<br>
+            <b>什么时候必须填:</b> 只要你的 frpc 端要创建 <code>http</code> 类型代理(按域名访问网站),就必须填,所有 frpc 的 http 代理共用这个端口。<br>
+            <b>什么时候可以不填:</b> 只用 <code>tcp</code>/<code>udp</code> 类型代理(如 SSH、数据库端口转发)时,不需要它。
+          </p>
+        </div>
+        <div>
+          <label class="form-label">HTTPS 虚拟端口 (vhostHTTPSPort)</label>
+          <input type="number" name="vhost_https_port" value="" min="1" max="65535" class="input" placeholder="可选">
+          <p class="form-hint" style="line-height:1.7;">
+            <b>作用:</b> 与上面类似,但用于 <code>https</code> 类型代理——由 <b>frps 直接终结 TLS</b>(证书配置在 frpc 代理上)。<br>
+            <b>什么时候填:</b> 仅当 frpc 端创建 <code>https</code> 类型代理,且希望 frps 自己解 TLS 时才需要。<br>
+            <b>最常见场景留空:</b> 如果你用 nginx 终结 TLS(证书放 nginx),再转发到上面的 vhostHTTPPort,那 frps 只需要处理 http,这里留空即可。
+          </p>
+        </div>
+      </div>
+      <div style="margin-bottom:.8rem;">
+        <label class="form-label">认证 Token (authToken)</label>
+        <div style="display:flex;gap:.5rem;">
+          <input type="text" name="auth_token" value="" class="input">
+          <button type="button" onclick="generateToken(this)" class="btn-ghost btn-sm" style="white-space:nowrap">🎲 随机生成</button>
+        </div>
+        <p class="form-hint">连接密码,frpc 侧必须填一样的。防止别人乱连你的 frps</p>
+      </div>
+      <div class="form-grid2" style="margin-bottom:.8rem;">
+        <div>
+          <label class="form-label">心跳超时 (秒)</label>
+          <input type="number" name="transport_heartbeat_ttl" value="90" class="input">
+          <p class="form-hint">多久没心跳就断开,默认 90 秒</p>
+        </div>
+        <div>
+          <label class="form-label">TCP 保活间隔 (秒)</label>
+          <input type="number" name="transport_tcp_keepalive" value="7200" class="input">
+          <p class="form-hint">保持连接不断,默认 7200 秒(2 小时)</p>
+        </div>
+      </div>
+      <div class="form-sec">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem;">
+          <label class="form-sec-title" style="margin:0;display:flex;align-items:center;gap:.5rem;">
+            <input type="checkbox" id="ws-enable" checked onchange="toggleWsFields()" style="width:1.05rem;height:1.05rem;accent-color:var(--accent);cursor:pointer">
+            📊 启用 Dashboard (webServer)
+          </label>
+        </div>
+        <p class="form-hint" style="margin-bottom:.8rem;">frps 内置管理面板,可看连接的 frpc 客户端和实时代理状态。建议开启</p>
+        <div id="ws-fields">
+          <div class="form-grid2" style="margin-bottom:.8rem;">
+            <div>
+              <label class="form-label">面板地址</label>
+              <input type="text" name="web_server_addr" value="127.0.0.1" class="input">
+              <p class="form-hint">127.0.0.1=仅本机可访问(更安全);0.0.0.0=对外开放</p>
+            </div>
+            <div>
+              <label class="form-label">面板端口</label>
+              <input type="number" name="web_server_port" value="5067" min="1" max="65535" class="input">
+              <p class="form-hint">建议跟 bindPort 不同,填 5067 即可</p>
+            </div>
+          </div>
+          <div class="form-grid2">
+            <div>
+              <label class="form-label">面板用户名</label>
+              <input type="text" name="web_server_user" value="admin" class="input">
+            </div>
+            <div>
+              <label class="form-label">面板密码</label>
+              <input type="password" name="web_server_password" value="admin123" class="input">
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  } else {
+    html = `
+      <div class="info-note green">
+        <b>这是什么?</b> frpc 是客户端,跑在 NAS 上(没有公网 IP 的机器)。
+        它主动连接云主机上的 frps,建立隧道,把 NAS 上的服务暴露到公网。
+        <br><br>
+        <b>简单理解:</b> frpc = NAS 上的"联络员",跟云主机上的 frps 说"我有个服务在 8080 端口,帮我转发"。
+      </div>
+      <h4 style="font-size:.9rem;font-weight:700;margin:0 0 .8rem;color:var(--success-fg)">🔗 客户端配置 (frpc)</h4>
+      <div class="form-sec">
+        <div class="form-sec-title">
+          <span>① 连接到哪台服务端?</span>
+          <button type="button" onclick="addServer()" class="btn-ghost btn-sm">+ 添加</button>
+        </div>
+        <p class="form-hint" style="margin-bottom:.8rem;">填云主机 frps 的地址和端口(跟 frps 配置里的一致)</p>
+        <div id="servers-section"></div>
+      </div>
+      <div class="form-sec">
+        <div class="form-sec-title"><span>② 心跳保活</span></div>
+        <p class="form-hint" style="margin:0 0 .6rem;">控制连接多久发一次心跳,防止被服务端超时掐断</p>
+        <div class="form-grid2">
+          <div>
+            <label class="form-label">心跳间隔 (秒)</label>
+            <input type="number" name="transport_heartbeat_interval" value="30" min="10" class="input" data-field="transport_heartbeat_interval">
+            <p class="form-hint">每 30 秒发一次心跳,保持长连接不断。填 0 表示不发心跳(会周期性断线)</p>
+          </div>
+          <div>
+            <label class="form-label" style="margin-bottom:.5rem;">TCP 复用</label>
+            <input type="checkbox" name="transport_tcp_mux" checked class="input" style="width:1.1rem;height:1.1rem;accent-color:var(--accent)" data-field="transport_tcp_mux">
+            <p class="form-hint">多个代理共用一条连接,更省资源。一般保持开启</p>
+          </div>
+        </div>
+        <p class="form-hint" style="margin-top:.6rem;color:var(--warn-fg);">💡 如果批量上传时偶发"网络连接异常",通常是心跳间隔没配或服务端超时太短,把这里设成 30 秒可解决</p>
+      </div>
+      <div class="form-sec">
+        <div class="form-sec-title">
+          <span>③ 要穿透哪些服务?</span>
+          <button type="button" onclick="addProxy()" class="btn-ghost btn-sm">+ 添加</button>
+        </div>
+        <p class="form-hint" style="margin:0 0 .8rem;">每条规则 = 把 NAS 上的一个端口,映射到公网上的一个端口</p>
+        <div id="proxies-section"></div>
+      </div>
+    `;
+  }
+  document.getElementById('config-fields').innerHTML = html;
+
+  if (type === 'frpc') {
+    renderServersSection();
+    renderProxiesSection();
+  }
+}
+
+function renderServersSection() {
+  const html = newInstanceState.servers.map((s, i) => `
+    <div class="form-sec" style="position:relative;margin-bottom:.6rem;" id="server-${i}">
+      <button type="button" onclick="removeServer(${i})" class="modal-close" style="position:absolute;top:.5rem;right:.6rem;font-size:1.2rem;">&times;</button>
+      <div class="form-grid2" style="margin-bottom:.6rem;">
+        <div>
+          <label class="form-label">名称</label>
+          <input type="text" value="${escapeHtml(s.name||'')}" data-field="name" class="input">
+        </div>
+        <div>
+          <label class="form-label">服务端地址</label>
+          <input type="text" value="${escapeHtml(s.serverAddr||'')}" data-field="serverAddr" class="input">
+        </div>
+        <div>
+          <label class="form-label">端口</label>
+          <input type="number" value="${s.serverPort||2005}" data-field="serverPort" class="input">
+        </div>
+        <div>
+          <label class="form-label">Token (跟服务端 frps 的一致)</label>
+          <input type="text" value="${escapeHtml(s.token||'')}" data-field="token" class="input">
+        </div>
+      </div>
+    </div>
+  `).join('');
+  document.getElementById('servers-section').innerHTML = html || '<p style="text-align:center;color:var(--muted);font-size:.85rem;padding:.6rem 0;">暂无服务端配置</p>';
+}
+
+function renderProxiesSection() {
+  const html = newInstanceState.proxies.map((p, i) => renderProxyRow(p, i)).join('');
+  document.getElementById('proxies-section').innerHTML = html || '<p style="text-align:center;color:var(--muted);font-size:.85rem;padding:.6rem 0;">暂无代理规则</p>';
+}
+
+function renderProxyRow(p, i) {
+  const isHttp = ['http','https'].includes(p.type);
+  const isTunnel = ['stcp','xtcp'].includes(p.type);
+  const typeLabels = {
+    tcp: 'TCP 端口转发(最常用,SSH/网页/数据库都行)',
+    udp: 'UDP 端口转发(DNS/游戏服务器等)',
+    http: 'HTTP 反向代理(按域名路由,需要 frps 配 vhostHTTPPort)',
+    https: 'HTTPS 反向代理(按域名路由,需要 frps 配 vhostHTTPSPort)',
+    stcp: '加密 TCP 隧道(需要访问者也跑 frpc,安全性高)',
+    xtcp: '点对点加密隧道(尝试直连,不通再走 frps 中转)',
+  };
+  return `
+    <div class="form-sec" style="position:relative;margin-bottom:.6rem;" id="proxy-${i}">
+      <button type="button" onclick="removeProxy(${i})" class="modal-close" style="position:absolute;top:.5rem;right:.6rem;font-size:1.2rem;">&times;</button>
+      <div class="form-grid2" style="margin-bottom:.6rem;">
+        <div>
+          <label class="form-label">名称</label>
+          <input type="text" value="${escapeHtml(p.name||'')}" data-field="name" class="input">
+        </div>
+        <div>
+          <label class="form-label">类型</label>
+          <select data-field="type" onchange="onProxyTypeChange(${i}, this.value)" class="input">
+            <option value="tcp" ${p.type==='tcp'?'selected':''}>tcp — TCP 转发</option>
+            <option value="udp" ${p.type==='udp'?'selected':''}>udp — UDP 转发</option>
+            <option value="http" ${p.type==='http'?'selected':''}>http — HTTP 代理</option>
+            <option value="https" ${p.type==='https'?'selected':''}>https — HTTPS 代理</option>
+            <option value="stcp" ${p.type==='stcp'?'selected':''}>stcp — 加密隧道</option>
+            <option value="xtcp" ${p.type==='xtcp'?'selected':''}>xtcp — 点对点隧道</option>
+          </select>
+        </div>
+      </div>
+      <p style="font-size:.78rem;color:var(--info-fg);margin:0 0 .6rem;">${typeLabels[p.type] || ''}</p>
+      <div class="form-grid2" style="margin-bottom:.6rem;">
+        <div>
+          <label class="form-label">服务在哪个地址? (localIP)</label>
+          <input type="text" value="${escapeHtml(p.local_ip||'127.0.0.1')}" data-field="local_ip" class="input">
+          <p class="form-hint">127.0.0.1 = 就在本机(NAS自己)。一般不用改</p>
+        </div>
+        <div>
+          <label class="form-label">NAS 上的服务端口 (localPort)</label>
+          <input type="number" value="${p.local_port||''}" data-field="local_port" class="input">
+          <p class="form-hint">你要穿透的服务,在 NAS 上跑的端口</p>
+        </div>
+      </div>
+      ${isHttp ? `
+      <div class="info-note yellow" style="margin-bottom:.6rem;">
+        ⚠️ <b>http/https 代理必须填域名</b>,否则 frps 不知道把哪个网址的请求转发给你,代理会启动失败。下方"远程端口"不适用。
+      </div>
+      <div style="margin-bottom:.6rem;">
+        <label class="form-label">域名 (逗号分隔)</label>
+        <input type="text" value="${escapeHtml((p.custom_domains||[]).join(','))}" data-field="custom_domains" class="input" placeholder="vault.example.com, api.example.com">
+        <p class="form-hint">完整域名,多个用逗号分隔。如: vault.example.com, api.example.com</p>
+      </div>
+      <div>
+        <label class="form-label">子域名前缀(可选,与域名二选一)</label>
+        <input type="text" value="${escapeHtml(p.subdomain||'')}" data-field="subdomain" class="input" placeholder="vault">
+        <p class="form-hint">只填前缀,由 frps 自动拼域名。需服务器配了 subdomainHost 才可用</p>
+      </div>` : `
+      <div style="margin-bottom:.6rem;">
+        <label class="form-label">云主机上开放的端口 (remotePort)</label>
+        <input type="number" value="${p.remote_port||''}" data-field="remote_port" class="input">
+        <p class="form-hint">访问者通过 <code>example.com:这个端口</code> 到达 NAS。在 2000-2050 内选,别跟已用的冲突</p>
+      </div>`}
+      ${isTunnel ? `
+      <div>
+        <label class="form-label">密钥 (secretKey)</label>
+        <input type="text" value="${escapeHtml(p.secret_key||'')}" data-field="secret_key" class="input">
+      </div>` : ''}
+    </div>
+  `;
+}
+
+function addServer() {
+  newInstanceState.servers.push({ name: 'srv'+(newInstanceState.servers.length+1), serverAddr: '', serverPort: 2005, token: '' });
+  renderServersSection();
+}
+function removeServer(i) {
+  newInstanceState.servers.splice(i, 1);
+  renderServersSection();
+}
+function addProxy() {
+  const n = newInstanceState.proxies.length + 1;
+  newInstanceState.proxies.push({ name: 'proxy'+n, type: 'tcp', local_ip: '127.0.0.1', local_port: 80, remote_port: 8080+n, custom_domains: [] });
+  renderProxiesSection();
+}
+function removeProxy(i) {
+  newInstanceState.proxies.splice(i, 1);
+  renderProxiesSection();
+}
+function onProxyTypeChange(i, val) {
+  newInstanceState.proxies[i].type = val;
+  // 切换类型时,根据新类型补默认字段
+  if (['http','https'].includes(val)) {
+    newInstanceState.proxies[i].custom_domains = ['example.com'];
+    delete newInstanceState.proxies[i].remote_port;
+  } else if (['tcp','udp'].includes(val)) {
+    newInstanceState.proxies[i].remote_port = newInstanceState.proxies[i].remote_port || (8080+i+1);
+    delete newInstanceState.proxies[i].custom_domains;
+  } else if (['stcp','xtcp'].includes(val)) {
+    newInstanceState.proxies[i].secret_key = newInstanceState.proxies[i].secret_key || '';
+  }
+  renderProxiesSection();
+}
+function onTypeChange(val) {
+  // 切换 frps/frpc 时,重置配置字段
+  newInstanceState.type = val;
+  if (val === 'frpc') {
+    newInstanceState.servers = newInstanceState.servers.length ? newInstanceState.servers : [{ name: 'default', serverAddr: '', serverPort: 2005, token: '' }];
+    newInstanceState.proxies = newInstanceState.proxies.length ? newInstanceState.proxies : [{ name: 'proxy1', type: 'tcp', local_ip: '127.0.0.1', local_port: 80, remote_port: 8080, custom_domains: [] }];
+  } else {
+    newInstanceState.servers = [];
+    newInstanceState.proxies = [];
+  }
+  renderConfigFields();
+}
+function onDeployChange(val) {
+  newInstanceState.deploy_mode = val;
+}
+
+function toggleWsFields() {
+  const checkbox = document.getElementById('ws-enable');
+  const fields = document.getElementById('ws-fields');
+  if (fields) {
+    fields.classList.toggle('hidden', !checkbox.checked);
+  }
+}
+
+function generateToken(btn) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let token = '';
+  for (let i = 0; i < 32; i++) token += chars[Math.floor(Math.random()*chars.length)];
+  btn.previousElementSibling.value = token;
+  toast('已生成 32 位随机 token', 'info');
+}
+
+// ============ 收集表单数据 → 提交 ============
+function collectFormData() {
+  const form = document.getElementById('newInstanceForm');
+  if (!form) return null;
+  const data = {
+    name: form.querySelector('[name=name]').value.trim(),
+    type: form.querySelector('[name=type]').value,
+    deploy_mode: 'binary',
+    config: {},
+  };
+  if (data.type === 'frps') {
+    ['bind_addr','bind_port','auth_token','transport_heartbeat_interval','transport_heartbeat_ttl','allow_arbitrary_ports','vhost_http_port','vhost_https_port'].forEach(f => {
+      const el = form.querySelector(`[name=${f}]`);
+      if (el) data.config[f] = (el.type === 'checkbox') ? el.checked : el.value;
+    });
+    data.config.bind_port = parseInt(data.config.bind_port);
+    data.config.transport_heartbeat_interval = parseInt(data.config.transport_heartbeat_interval);
+    data.config.transport_heartbeat_ttl = parseInt(data.config.transport_heartbeat_ttl);
+    // vhost 端口:空字符串转 undefined,避免生成 frps 配置时输出空值
+    if (data.config.vhost_http_port !== undefined && data.config.vhost_http_port !== '') data.config.vhost_http_port = parseInt(data.config.vhost_http_port);
+    else delete data.config.vhost_http_port;
+    if (data.config.vhost_https_port !== undefined && data.config.vhost_https_port !== '') data.config.vhost_https_port = parseInt(data.config.vhost_https_port);
+    else delete data.config.vhost_https_port;
+    // webServer (Dashboard) - 仅当启用时收集
+    const wsEnable = document.getElementById('ws-enable');
+    if (wsEnable && wsEnable.checked) {
+      const wsAddr = form.querySelector('[name=web_server_addr]');
+      const wsPort = form.querySelector('[name=web_server_port]');
+      const wsUser = form.querySelector('[name=web_server_user]');
+      const wsPass = form.querySelector('[name=web_server_password]');
+      if (wsAddr) data.config.web_server_addr = wsAddr.value;
+      if (wsPort) data.config.web_server_port = parseInt(wsPort.value);
+      if (wsUser) data.config.web_server_user = wsUser.value;
+      if (wsPass && wsPass.value) data.config.web_server_password = wsPass.value;
+    }
+  } else {
+    // frpc:传输配置(心跳间隔/TCP复用)在顶层表单,直接按 name 收集
+    const hbInterval = form.querySelector('[name=transport_heartbeat_interval]');
+    if (hbInterval) data.config.transport_heartbeat_interval = parseInt(hbInterval.value) || 0;
+    const tcpMux = form.querySelector('[name=transport_tcp_mux]');
+    if (tcpMux) data.config.transport_tcp_mux = tcpMux.checked;
+    // 直接从 DOM 收集 servers 和 proxies
+    const servers = [];
+    document.querySelectorAll('[id^="server-"]').forEach(el => {
+      const f = {};
+      el.querySelectorAll('[data-field]').forEach(inp => {
+        f[inp.dataset.field] = inp.value;
+      });
+      f.serverPort = parseInt(f.serverPort) || 2005;
+      servers.push(f);
+    });
+    const proxies = [];
+    document.querySelectorAll('[id^="proxy-"]').forEach(el => {
+      const f = {};
+      el.querySelectorAll('[data-field]').forEach(inp => {
+        f[inp.dataset.field] = inp.value;
+      });
+      f.local_port = parseInt(f.local_port) || 0;
+      f.remote_port = parseInt(f.remote_port) || undefined;
+      if (f.custom_domains) f.custom_domains = f.custom_domains.split(',').map(s=>s.trim()).filter(Boolean);
+      else f.custom_domains = [];
+      proxies.push(f);
+    });
+    data.config.servers = servers;
+    data.config.proxies = proxies;
+  }
+  return data;
+}
+
+async function submitNewInstance(e) {
+  e.preventDefault();
+  const data = collectFormData();
+  if (!data) return;
+  if (!data.name) { toast('请输入实例名', 'error'); return; }
+  try {
+    const result = await api('/api/instances', { method: 'POST', body: JSON.stringify(data), busy: '正在创建实例...' });
+    toast('实例创建成功', 'success');
+    closeModal();
+    await loadDashboard();
+    nav('instances');
+    if (result.container && !result.container.success) {
+      toast(`容器创建失败: ${result.container.error||''}`, 'error');
+    }
+  } catch (e) {
+    if (e && e.authExpired) return;
+    toast(`创建失败: ${e.message}`, 'error');
+  }
+}
+
+// ============ 实例详情页 ============
+let detailInstance = null;
+let frpsStatusData = null;
+
+async function showDetail(id) {
+  try {
+    detailInstance = await api(`/api/instances/${id}`);
+    renderDetail();
+    nav('detail');
+    // 如果是 frps 实例,加载实时状态
+    if (detailInstance.type === 'frps' && detailInstance.status?.running) {
+      loadFrpsStatus(id);
+    }
+  } catch (e) {
+    if (e && e.authExpired) return;
+    toast(`加载失败: ${e.message}`, 'error');
+  }
+}
+
+async function loadFrpsStatus(id) {
+  try {
+    const data = await api(`/api/instances/${id}/frps-status`);
+    frpsStatusData = data;
+    // 只渲染 frps 状态面板(不重绘整个 detail 页)
+    const panel = document.getElementById('frps-status-panel');
+    if (panel) panel.outerHTML = renderFrpsStatusPanel(id);
+  } catch (e) {
+    if (e && e.authExpired) return;
+    const panel = document.getElementById('frps-status-panel');
+    if (panel) panel.innerHTML = `<div style="color:var(--danger-fg);font-size:.85rem;">加载失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderFrpsStatusPanel(id) {
+  const d = frpsStatusData;
+  if (!d) return '<div style="color:var(--muted)">无数据</div>';
+
+  // 错误状态(实例未启用 webServer 或 frps 进程挂了)
+  if (d.serverinfo && d.serverinfo._error) {
+    return `<div class="panel p-4" style="margin-bottom:1rem;" id="frps-status-panel">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem;">
+        <p class="card-title" style="margin:0">📊 实时状态</p>
+        <span style="font-size:.78rem;color:var(--muted)">webServer: ${escapeHtml(d.web_server_url||'-')}</span>
+      </div>
+      <div class="info-note red" style="margin:0">${escapeHtml(d.serverinfo._error)}</div>
+    </div>`;
+  }
+
+  const si = d.serverinfo || {};
+  const proxies = d.proxies || [];
+  const fmtBytes = n => formatBytes(n||0);
+
+  // serverinfo 指标卡:4 张彩色卡
+  const cards = `
+    <div class="stat-grid" style="margin-bottom:1rem;">
+      <div class="stat-card">
+        <div class="stat-icon ic-violet">👥</div>
+        <div class="f1">
+          <div class="stat-label">已连接客户端</div>
+          <div class="stat-value" style="color:var(--info-fg)">${si.clientCounts || 0}</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon ic-blue">🔌</div>
+        <div class="f1">
+          <div class="stat-label">当前连接数</div>
+          <div class="stat-value">${si.curConns || 0}</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon ic-green">📥</div>
+        <div class="f1">
+          <div class="stat-label">入站流量</div>
+          <div class="stat-value" style="color:var(--success-fg)">${fmtBytes(si.totalTrafficIn)}</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon ic-amber">📤</div>
+        <div class="f1">
+          <div class="stat-label">出站流量</div>
+          <div class="stat-value" style="color:var(--warn-fg)">${fmtBytes(si.totalTrafficOut)}</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // 代理列表
+  let proxiesHtml;
+  if (proxies.length === 0) {
+    proxiesHtml = `
+      <div class="empty-state" style="padding:2rem 1rem;">
+        <div class="empty-state-icon">📡</div>
+        <div class="empty-state-title">无活跃代理</div>
+        <div class="empty-state-desc">没有 frpc 客户端连上来。检查 frpc 是否已配置 serverAddr 指向本 frps 并启动。</div>
+      </div>`;
+  } else {
+    const rows = proxies.map((p, idx) => {
+      const name = p.name || '-';
+      const ptype = p._type || '-';
+      const conf = p.conf || {};
+      const domains = conf.customDomains || (conf.subdomain ? [conf.subdomain] : []);
+      const localPort = conf.localPort != null ? conf.localPort : null;
+      const remote = conf.remotePort || conf.bindAddr || (domains.length ? domains.join(', ') : '') || conf.group || '-';
+      const local = localPort != null ? `${conf.localIP || '-'}:${localPort}` : (conf.localIP || '-');
+      const ver = p.clientVersion || '-';
+      const status = p.status === 'online'
+        ? `<span style="display:inline-flex;align-items:center;gap:.4rem;"><span class="dot dot-green dot-pulse"></span><span style="font-size:.78rem">在线</span></span>`
+        : `<span style="display:inline-flex;align-items:center;gap:.4rem;"><span class="dot dot-red"></span><span style="font-size:.78rem">离线</span></span>`;
+      const conns = p.curConns || 0;
+      const tIn = fmtBytes(p.todayTrafficIn);
+      const tOut = fmtBytes(p.todayTrafficOut);
+      const hasDomains = domains && domains.length > 0;
+      const nginxBtn = (hasDomains && ['http', 'https'].includes(ptype))
+        ? `<button class="btn-ghost btn-sm" style="color:var(--info-fg)" onclick="showNginxConfigForFrpsProxy(${id}, ${idx})">🌐 nginx 配置</button>`
+        : '<span style="color:var(--muted);font-size:.75rem;">—</span>';
+      const isOffline = p.status !== 'online';
+      const deleteBtn = isOffline
+        ? `<button class="btn-ghost btn-sm" style="color:var(--danger-fg)" onclick="deleteFrpsProxy(${id}, '${escapeHtml(name)}')">删除</button>`
+        : '<span style="color:var(--muted);font-size:.75rem;">—</span>';
+      return `<tr>
+        <td style="font-weight:600" class="truncate-cell" title="${escapeHtml(name)}">${escapeHtml(name)}</td>
+        <td><span class="badge badge-blue">${escapeHtml(ptype)}</span></td>
+        <td><code class="truncate-cell" title="${escapeHtml(remote)}">${escapeHtml(remote)}</code></td>
+        <td><code class="truncate-cell" title="${escapeHtml(local)}">${escapeHtml(local)}</code></td>
+        <td>${status}</td>
+        <td style="text-align:center">${conns}</td>
+        <td style="color:var(--muted);font-size:.78rem">${escapeHtml(ver)}</td>
+        <td><code>${escapeHtml(tIn)} / ${escapeHtml(tOut)}</code></td>
+        <td>${nginxBtn}</td>
+        <td>${deleteBtn}</td>
+      </tr>`;
+    }).join('');
+    proxiesHtml = `<div class="data-table-wrap"><table class="data-table">
+      <thead><tr>
+        <th>代理名</th><th>类型</th><th>域名/端口</th><th>本地地址</th><th>状态</th>
+        <th style="text-align:center">并发</th><th>版本</th><th>今日流量(入/出)</th><th>nginx 配置</th><th>操作</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+  }
+
+  return `<div class="panel p-4" style="margin-bottom:1rem;" id="frps-status-panel">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.6rem;margin-bottom:1rem;">
+      <p class="card-title" style="margin:0">📊 实时状态 (frps dashboard)</p>
+      <div style="display:flex;align-items:center;gap:.8rem;">
+        <span style="font-size:.78rem;color:var(--muted)">webServer: <code>${escapeHtml(d.web_server_url||'-')}</code></span>
+        <button onclick="loadFrpsStatus(${id})" class="btn-ghost btn-sm">刷新</button>
+      </div>
+    </div>
+    ${cards}
+    <h4 style="font-size:.9rem;font-weight:700;margin:0 0 .7rem;">代理列表 <span style="color:var(--muted);font-weight:400">(${proxies.length})</span></h4>
+    ${proxiesHtml}
+  </div>`;
+}
+
+function renderDetail() {
+  if (!detailInstance) return;
+  const i = detailInstance;
+  const running = i.status?.running;
+  const cfg = i.config_content || '';
+  const stClass = running ? 'st-running' : 'st-stopped';
+  const stText = running ? '运行中' : '已停止';
+  const dotClass = running ? 'dot-green dot-pulse' : 'dot-red';
+  const icon = i.type === 'frps' ? '🖥️' : '🔗';
+
+  document.getElementById('view-detail').innerHTML = `
+    <div class="detail-head">
+      <button onclick="nav('instances');loadInstances()" class="btn-ghost btn-sm">← 实例列表</button>
+      <h2>${icon} ${escapeHtml(i.name)}</h2>
+      <span class="badge ${i.type==='frps'?'badge-blue':'badge-gray'}">${i.type}</span>
+      <span class="inst-status ${stClass}" style="padding:.25rem .7rem;font-size:.78rem;"><span class="dot ${dotClass}"></span>${stText}</span>
+      <span class="badge badge-gray">${escapeHtml(i.deploy_mode)}</span>
+      <div class="f1"></div>
+      <button onclick="deleteInstance(${i.id})" class="btn-danger btn-sm">删除</button>
+    </div>
+    ${i.type === 'frps' && running ? `<div class="panel p-4" style="margin-bottom:1rem;" id="frps-status-panel"><div style="color:var(--muted);font-size:.85rem;display:flex;align-items:center;gap:.6rem;"><span class="spinner spinner-blue"></span>加载实时状态中...</div></div>` : ''}
+    <div class="panel p-4" style="margin-bottom:1rem;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.8rem;">
+        <div style="flex:1;min-width:14rem;">
+          <p class="card-title" style="margin:0 0 .4rem;"><span class="tt">📋</span>实例信息</p>
+          <div style="display:grid;grid-template-columns:auto 1fr;gap:.25rem 1.2rem;font-size:.82rem;">
+            <span style="color:var(--muted)">ID</span><span>${i.id}</span>
+            <span style="color:var(--muted)">创建时间</span><span>${new Date(i.created_at*1000).toLocaleString()}</span>
+            <span style="color:var(--muted)">更新时间</span><span>${new Date(i.updated_at*1000).toLocaleString()}</span>
+            <span style="color:var(--muted)">配置文件</span><span><code>${escapeHtml(i.config_path)}</code></span>
+            <span style="color:var(--muted)">容器状态</span><span>${escapeHtml(i.status?.status||'-')}</span>
+          </div>
+        </div>
+        <div style="flex-shrink:0;">
+          <p class="card-title" style="margin:0 0 .4rem;"><span class="tt">⚙️</span>操作</p>
+          <div style="display:flex;flex-wrap:wrap;gap:.5rem;">
+            ${running ? '<button onclick="stopInstance('+i.id+')" class="btn-ghost btn-sm" style="color:var(--warn-fg)">停止</button>' : '<button onclick="startInstance('+i.id+')" class="btn-ghost btn-sm" style="color:var(--success-fg)">启动</button>'}
+            <button onclick="restartInstance(${i.id})" class="btn-ghost btn-sm">重启</button>
+            <button onclick="viewLogs(${i.id})" class="btn-ghost btn-sm">📜 查看日志</button>
+            <button onclick="editInstance(${i.id})" class="btn-ghost btn-sm">✏️ 编辑配置</button>
+            <button onclick="copyConfig()" class="btn-ghost btn-sm">📋 复制配置</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="panel p-4" style="margin-bottom:1rem;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.7rem;">
+        <p class="card-title" style="margin:0"><span class="tt">📄</span>配置文件 (TOML)</p>
+        <div class="flex gap-2">
+          <button onclick="editInstance(${i.id})" class="btn-ghost btn-sm">编辑</button>
+          <button onclick="refreshDetail(${i.id})" class="btn-ghost btn-sm">刷新</button>
+        </div>
+      </div>
+      <pre id="config-content" class="code-block" style="max-height:24rem;">${escapeHtml(cfg)}</pre>
+    </div>
+  `;
+}
+
+async function refreshDetail(id) { await showDetail(id); }
+
+async function editInstance(id) {
+  try {
+    const inst = await api(`/api/instances/${id}`);
+    newInstanceState = { type: inst.type, deploy_mode: inst.deploy_mode, servers: [], proxies: [] };
+    const cfg = inst.config_content;
+    // 简单解析:从配置文本中提取基本字段(实际应做 TOML 解析)
+    // 这里用占位提示
+    showEditInstanceModal(inst);
+  } catch (e) {
+    if (e && e.authExpired) return;
+    toast(`加载失败: ${e.message}`, 'error');
+  }
+}
+
+function showEditInstanceModal(inst) {
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-card" style="width:50rem;max-width:100%;">
+      <div class="modal-head">
+        <h3>✏️ 编辑实例: ${escapeHtml(inst.name)}</h3>
+        <button onclick="closeModal()" class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body" style="max-height:78vh;overflow-y:auto;">
+        <p style="font-size:.85rem;color:var(--muted-light);margin:0 0 .8rem;">直接编辑 TOML 配置,提交后实例会自动重启。</p>
+        <textarea id="edit-config" class="input mono" style="height:24rem;width:100%;font-size:.82rem;line-height:1.6;">${escapeHtml(inst.config_content||'')}</textarea>
+      </div>
+      <div class="modal-foot">
+        <button type="button" onclick="closeModal()" class="btn-ghost">取消</button>
+        <button type="button" onclick="saveInstanceConfig(${inst.id})" class="btn-primary">保存并重启</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('modal-container').classList.remove('hidden');
+}
+
+async function saveInstanceConfig(id) {
+  try {
+    const config = document.getElementById('edit-config').value;
+    // 用 api() 自动带 token,避免裸 fetch 401
+    await api(`/api/instances/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ raw_config: config, restart: true }),
+      busy: '正在保存配置并重启实例...',
+    });
+    toast('配置已保存,实例重启中...', 'success');
+    closeModal();
+    setTimeout(() => refreshDetail(id), 1500);
+  } catch (e) {
+    // 401 已由 api() 内部跳登录;其他错误弹 toast
+    if (e && e.authExpired) return;
+    toast(`保存失败: ${e.message}`, 'error');
+  }
+}
+
+function copyConfig() {
+  const cfg = document.getElementById('config-content')?.textContent || '';
+  navigator.clipboard.writeText(cfg).then(() => toast('配置已复制到剪贴板', 'success'));
+}
+
+function viewLogs(id) {
+  showLogsModal(id);
+}
+
+function showLogsModal(id) {
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-card" style="width:60rem;max-width:100%;height:80vh;display:flex;flex-direction:column;">
+      <div class="modal-head">
+        <h3>📜 实时日志</h3>
+        <div style="display:flex;gap:.5rem;">
+          <button onclick="toggleLogStream()" id="stream-btn" class="btn-ghost btn-sm">⏸ 暂停</button>
+          <button onclick="closeModal()" class="btn-ghost btn-sm">关闭</button>
+        </div>
+      </div>
+      <div id="log-output" style="flex:1;overflow-y:auto;padding:1rem;background:#0f172a;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem;color:#4ade80;white-space:pre;line-height:1.55;"></div>
+    </div>
+  `;
+  document.getElementById('modal-container').classList.remove('hidden');
+  startLogStream(id);
+}
+
+async function startLogStream(id) {
+  if (logStream) logStream.close();
+  const lines = await api(`/api/instances/${id}/logs?lines=100`).then(d => d.logs).catch(() => '');
+  document.getElementById('log-output').textContent = lines;
+  // SSE 实时流
+  const evtSource = new EventSource(`/api/instances/${id}/logs?stream=1`);
+  evtSource.onmessage = (e) => {
+    const el = document.getElementById('log-output');
+    el.textContent += e.data;
+    el.scrollTop = el.scrollHeight;
+  };
+  evtSource.onerror = () => {
+    evtSource.close();
+  };
+  logStream = evtSource;
+}
+
+function toggleLogStream() {
+  const btn = document.getElementById('stream-btn');
+  if (logStream) {
+    logStream.close();
+    logStream = null;
+    btn.textContent = '▶ 继续';
+  } else {
+    const id = detailInstance?.id;
+    if (id) startLogStream(id);
+    btn.textContent = '⏸ 暂停';
+  }
+}
+
+// ============ 实例操作 ============
+async function startInstance(id) {
+  try { await api(`/api/instances/${id}/start`, { method: 'POST', busy: '正在启动实例...' }); toast('启动成功', 'success'); loadInstances(); }
+  catch (e) { if (e && e.authExpired) return; toast(`启动失败: ${e.message}`, 'error'); }
+}
+async function stopInstance(id) {
+  try { await api(`/api/instances/${id}/stop`, { method: 'POST', busy: '正在停止实例...' }); toast('停止成功', 'success'); loadInstances(); }
+  catch (e) { if (e && e.authExpired) return; toast(`停止失败: ${e.message}`, 'error'); }
+}
+async function restartInstance(id) {
+  try { await api(`/api/instances/${id}/restart`, { method: 'POST', busy: '正在重启实例...' }); toast('重启成功', 'success'); setTimeout(loadInstances, 1000); }
+  catch (e) { if (e && e.authExpired) return; toast(`重启失败: ${e.message}`, 'error'); }
+}
+async function deleteInstance(id) {
+  if (!confirm('确定删除此实例?容器和配置都会删除,不可恢复!')) return;
+  try { await api(`/api/instances/${id}`, { method: 'DELETE', busy: '正在删除实例...' }); toast('已删除', 'success'); loadInstances(); }
+  catch (e) { if (e && e.authExpired) return; toast(`删除失败: ${e.message}`, 'error'); }
+}
+
+function closeModal() {
+  if (logStream) { logStream.close(); logStream = null; }
+  document.getElementById('modal-container').classList.add('hidden');
+}
+
+// ============ 实例展开/收起代理列表 ============
+let expandedInstances = {};
+
+async function toggleInstanceProxies(instanceId, linkEl) {
+  const box = document.getElementById(`proxies-${instanceId}`);
+  const content = document.getElementById(`proxies-content-${instanceId}`);
+  const arrow = linkEl.querySelector('span');
+
+  if (!box) return;
+  if (box.classList.contains('open')) {
+    // 收起
+    box.classList.remove('open');
+    if (arrow) arrow.textContent = '▼';
+    expandedInstances[instanceId] = false;
+  } else {
+    // 展开
+    box.classList.add('open');
+    if (arrow) arrow.textContent = '▲';
+    expandedInstances[instanceId] = true;
+    // 总是重新加载,避免之前 renderInstances 重建 DOM 残留的"加载中..."占位
+    await loadInstanceProxies(instanceId);
+  }
+}
+
+async function loadInstanceProxies(instanceId) {
+  const content = document.getElementById(`proxies-content-${instanceId}`);
+  if (!content) return;
+  try {
+    const data = await api(`/api/instances/${instanceId}/proxies`);
+    renderProxyList(instanceId, data.proxies || []);
+  } catch (e) {
+    if (e && e.authExpired) return;
+    content.innerHTML = `<div style="color:var(--danger-fg);font-size:.85rem;">加载失败: ${e.message}</div>`;
+  }
+}
+function renderProxyList(instanceId, proxies) {
+  const content = document.getElementById(`proxies-content-${instanceId}`);
+  if (!content) return;
+
+  if (proxies.length === 0) {
+    content.innerHTML = `
+      <div class="empty-state" style="padding:1.6rem 1rem;">
+        <div class="empty-state-icon">🔌</div>
+        <div class="empty-state-title">暂无代理</div>
+        <div class="empty-state-desc">代理定义 frpc 向后端要转发的流量规则（端口映射 / 域名转发）。</div>
+        <button class="btn-primary btn-sm empty-state-action" onclick="showNewProxyModal(${instanceId})">+ 新增代理</button>
+      </div>`;
+    return;
+  }
+
+  let html = `<div class="mb-2" style="text-align:right">
+    <button class="btn-ghost btn-sm" style="color:var(--info-fg)" onclick="showNewProxyModal(${instanceId})">+ 新增代理</button>
+  </div>`;
+
+  proxies.forEach(p => {
+    const enabled = p.enabled;
+    const statusBadge = enabled
+      ? `<span class="badge badge-green"><span class="dot dot-green"></span>启用</span>`
+      : `<span class="badge badge-gray"><span class="dot dot-gray"></span>禁用</span>`;
+    const toggleBtn = enabled
+      ? `<button class="btn-ghost btn-sm" style="color:var(--warn-fg)" onclick="toggleProxy(${instanceId}, ${p.id}, false)">停止</button>`
+      : `<button class="btn-ghost btn-sm" style="color:var(--success-fg)" onclick="toggleProxy(${instanceId}, ${p.id}, true)">启动</button>`;
+
+    let portInfo = '';
+    let extraLine = '';
+    if (p.type === 'tcp' || p.type === 'udp') {
+      portInfo = `${p.local_ip}:${p.local_port} → :${p.remote_port}`;
+    } else if (p.type === 'http' || p.type === 'https') {
+      portInfo = `${p.local_ip}:${p.local_port}`;
+      if (p.custom_domains && p.custom_domains.length) {
+        extraLine = `<div class="p-domains">域名: <span class="truncate-cell" style="display:inline-block;max-width:16rem;" title="${escapeHtml(p.custom_domains.join(', '))}">${escapeHtml(p.custom_domains.join(', '))}</span></div>`;
+      }
+    } else if (p.type === 'stcp' || p.type === 'xtcp') {
+      const sk = p.secret_key || '';
+      const masked = sk.length > 8 ? `${sk.slice(0, 4)}…${sk.slice(-4)}` : (sk || '未设置');
+      extraLine = `<div class="p-domains">密钥: <span class="mono">${escapeHtml(masked)}</span></div>`;
+    } else {
+      portInfo = `${p.local_ip}:${p.local_port}`;
+    }
+
+    html += `
+    <div class="proxy-row">
+      <div class="f1">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="p-name">${escapeHtml(p.name)}</span>
+          <span class="badge badge-blue">${escapeHtml(p.type)}</span>
+          ${statusBadge}
+        </div>
+        <div class="p-port" style="margin-top:.2rem">${escapeHtml(portInfo)}</div>
+        ${extraLine}
+      </div>
+      <div class="p-actions">
+        ${toggleBtn}
+        <button class="btn-ghost btn-sm" onclick="showEditProxyModal(${instanceId}, ${p.id})">编辑</button>
+        <button class="btn-ghost btn-sm" style="color:var(--danger-fg)" onclick="deleteProxy(${instanceId}, ${p.id}, '${escapeHtml(p.name)}')">删除</button>
+      </div>
+    </div>`;
+  });
+
+  html += ``;
+  content.innerHTML = html;
+}
+
+function showNewProxyModal(instanceId) {
+  proxyModalState = { instanceId, proxyId: null, isEdit: false };
+  renderProxyModal();
+}
+
+function showEditProxyModal(instanceId, proxyId) {
+  proxyModalState = { instanceId, proxyId, isEdit: true };
+  api(`/api/instances/${instanceId}/proxies`).then(data => {
+    const proxy = (data.proxies || []).find(p => p.id === proxyId);
+    if (!proxy) {
+      toast('代理不存在', 'error');
+      return;
+    }
+    proxyModalState.proxy = proxy;
+    renderProxyModal();
+  }).catch(e => {
+    if (e && e.authExpired) return;
+    toast(`加载代理失败: ${e.message}`, 'error');
+  });
+}
+
+function renderProxyModal() {
+  const { isEdit, proxy } = proxyModalState;
+  const title = isEdit ? '编辑代理规则' : '新增代理规则';
+  const p = proxy || {};
+
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-card" style="width:34rem;max-width:100%;">
+      <div class="modal-head">
+        <h3>${isEdit ? '✏️' : '➕'} ${title}</h3>
+        <button onclick="closeModal()" class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body" style="max-height:78vh;overflow-y:auto;">
+        <form id="proxyForm">
+          <div class="form-grid2" style="margin-bottom:.9rem;">
+            <div>
+              <label class="form-label">代理名 <span style="color:var(--danger-fg)">*</span></label>
+              <input type="text" id="proxy-name" required pattern="^[a-zA-Z][a-zA-Z0-9_-]{1,30}$"
+                     value="${p.name ? escapeHtml(p.name) : ''}" class="input">
+              <p class="form-hint">小写字母开头,可用字母数字下划线连字符</p>
+            </div>
+            <div>
+              <label class="form-label">代理类型 <span style="color:var(--danger-fg)">*</span></label>
+              <select id="proxy-type" class="input" onchange="onProxyTypeChangeModal(this.value)">
+                ${['tcp','udp','http','https','stcp','xtcp'].map(t =>
+                  `<option value="${t}" ${(p.type||'tcp')===t?'selected':''}>${t}</option>`
+                ).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="form-grid2" style="margin-bottom:.9rem;">
+            <div>
+              <label class="form-label">本地 IP</label>
+              <input type="text" id="proxy-local-ip" value="${p.local_ip || '127.0.0.1'}" class="input">
+            </div>
+            <div>
+              <label class="form-label">本地端口 <span style="color:var(--danger-fg)">*</span></label>
+              <input type="number" id="proxy-local-port" required value="${p.local_port || ''}" class="input">
+            </div>
+          </div>
+          <div id="proxy-type-fields"></div>
+        </form>
+      </div>
+      <div class="modal-foot">
+        <button type="button" onclick="closeModal()" class="btn-ghost">取消</button>
+        <button type="submit" class="btn-primary" form="proxyForm">${isEdit ? '保存修改' : '创建代理'}</button>
+      </div>
+    </div>
+  `;
+
+  renderProxyTypeFields(p.type || 'tcp');
+  document.getElementById('modal-container').classList.remove('hidden');
+  document.getElementById('proxyForm').addEventListener('submit', submitProxy);
+}
+
+function renderProxyTypeFields(type) {
+  const p = proxyModalState.proxy || {};
+  const el = document.getElementById('proxy-type-fields');
+  if (!el) return;
+  let html = '';
+
+  if (type === 'tcp' || type === 'udp') {
+    html += `
+      <div>
+        <label class="form-label">远程端口 <span style="color:var(--danger-fg)">*</span></label>
+        <input type="number" id="proxy-remote-port" required value="${p.remote_port || ''}" class="input">
+        <p class="form-hint">frps 监听的公网端口,客户端通过此端口访问你的服务</p>
+      </div>`;
+  } else if (type === 'http' || type === 'https') {
+    html += `
+      <div class="info-note yellow" style="margin-bottom:.8rem;">
+        ⚠️ 这种类型的代理<b>必须填一个域名</b>(下方"自定义域名"或"子域名"二选一),
+        否则 frps 不知道把哪个网址的请求转发给你,代理会启动失败。
+      </div>
+      <div style="margin-bottom:.8rem;">
+        <label class="form-label">自定义域名 <span style="color:var(--danger-fg)">*</span></label>
+        <input type="text" id="proxy-custom-domains" value="${p.custom_domains ? p.custom_domains.join(', ') : ''}" class="input">
+        <p class="form-hint">完整域名,多个用逗号分隔。如: vault.example.com, api.example.com</p>
+      </div>
+      <div>
+        <label class="form-label">子域名</label>
+        <input type="text" id="proxy-subdomain" value="${p.subdomain || ''}" class="input">
+        <p class="form-hint">只填前缀,由 frps 自动拼域名。需服务器配了 subdomainHost 才可用。与自定义域名二选一</p>
+      </div>`;
+  } else if (type === 'stcp' || type === 'xtcp') {
+    html += `
+      <div>
+        <label class="form-label">密钥 <span style="color:var(--danger-fg)">*</span></label>
+        <input type="text" id="proxy-secret-key" required value="${p.secret_key || ''}" class="input">
+        <p class="form-hint">点对点隧道密钥,客户端和服务端需使用相同密钥</p>
+      </div>`;
+  }
+
+  el.innerHTML = html;
+}
+
+function onProxyTypeChangeModal(type) {
+  renderProxyTypeFields(type);
+}
+
+async function submitProxy(e) {
+  e.preventDefault();
+
+  const instanceId = proxyModalState.instanceId;
+  const isEdit = proxyModalState.isEdit;
+  const proxyId = proxyModalState.proxyId;
+  const original = (isEdit && proxyModalState.proxy) ? { ...proxyModalState.proxy } : {};
+
+  // 编辑时保留原对象的所有字段(高级字段不在 UI 暴露,避免意外清空);
+  // 新建时 data 只包含表单字段。
+  const data = {
+    ...original,
+    name: document.getElementById('proxy-name').value.trim(),
+    type: document.getElementById('proxy-type').value,
+    local_ip: document.getElementById('proxy-local-ip').value.trim(),
+    local_port: parseInt(document.getElementById('proxy-local-port').value, 10),
+  };
+
+  // 根据当前 type 显式设置/清空对应字段,避免切类型时残留旧值
+  const type = data.type;
+  if (type === 'tcp' || type === 'udp') {
+    data.remote_port = parseInt(document.getElementById('proxy-remote-port').value, 10);
+    // 清空其他类型专属字段
+    delete data.custom_domains; delete data.subdomain; delete data.secret_key;
+  } else if (type === 'http' || type === 'https') {
+    const domains = document.getElementById('proxy-custom-domains').value.trim();
+    const subdomain = document.getElementById('proxy-subdomain').value.trim();
+    // frp 要求 http/https 代理必须有域名(customDomains 或 subdomain 二选一),否则代理启动失败
+    if (!domains && !subdomain) {
+      toast('http/https 代理必须填写域名:自定义域名或子域名二选一', 'error');
+      return;
+    }
+    data.custom_domains = domains ? domains.split(',').map(s => s.trim()).filter(Boolean) : [];
+    data.subdomain = subdomain || null;
+    delete data.remote_port; delete data.secret_key;
+  } else if (type === 'stcp' || type === 'xtcp') {
+    data.secret_key = document.getElementById('proxy-secret-key').value.trim();
+    delete data.remote_port; delete data.custom_domains; delete data.subdomain;
+  }
+
+  try {
+    if (isEdit) {
+      await api(`/api/instances/${instanceId}/proxies/${proxyId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+        busy: '正在更新代理并重启实例...',
+      });
+      toast('代理已更新,实例重启中...', 'success');
+    } else {
+      await api(`/api/instances/${instanceId}/proxies`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+        busy: '正在创建代理并重启实例...',
+      });
+      toast('代理已创建,实例重启中...', 'success');
+    }
+    closeModal();
+    // 刷新代理列表和实例列表
+    if (expandedInstances[instanceId]) {
+      await loadInstanceProxies(instanceId);
+    }
+    setTimeout(() => loadInstances(), 1500);
+  } catch (err) {
+    if (err && err.authExpired) return;  // 401 已跳登录
+    toast(`保存失败: ${err.message}`, 'error');
+  }
+}
+
+async function toggleProxy(instanceId, proxyId, enabled) {
+  try {
+    await api(`/api/instances/${instanceId}/proxies/${proxyId}/toggle`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+      busy: enabled ? '正在启用代理并重启实例...' : '正在禁用代理并重启实例...',
+    });
+    toast(enabled ? '已启用,实例重启中...' : '已禁用,实例重启中...', 'success');
+    await loadInstanceProxies(instanceId);
+    setTimeout(() => loadInstances(), 1500);
+  } catch (err) {
+    if (err && err.authExpired) return;
+    toast(`操作失败: ${err.message}`, 'error');
+  }
+}
+
+async function deleteProxy(instanceId, proxyId, name) {
+  if (!confirm(`确定删除代理 "${name}" 吗?`)) return;
+  try {
+    await api(`/api/instances/${instanceId}/proxies/${proxyId}`, { method: 'DELETE', busy: '正在删除代理并重启实例...' });
+    toast('代理已删除,实例重启中...', 'success');
+    await loadInstanceProxies(instanceId);
+    setTimeout(() => loadInstances(), 1500);
+  } catch (err) {
+    if (err && err.authExpired) return;
+    toast(`删除失败: ${err.message}`, 'error');
+  }
+}
+
+// ============ frps 详情页:删除离线代理 ============
+// 入口在 frps 实例详情页的实时代理表里,只对离线代理显示删除按钮。
+// 在线代理说明 frpc 还连着,删了配置会立刻重新注册回来,所以不显示。
+async function deleteFrpsProxy(instanceId, name) {
+  if (!confirm(`确定删除离线代理 "${name}" 吗?\n\n删除后会重启所属 frpc 实例并重新生成配置。`)) return;
+  try {
+    const r = await api(`/api/instances/${instanceId}/frps-proxies/${encodeURIComponent(name)}`, { method: 'DELETE', busy: '正在删除离线代理...' });
+    toast(`已删除 ${name}(所属实例: ${r.instance}),实例重启中...`, 'success');
+    await loadFrpsStatus(instanceId);
+    setTimeout(() => loadInstances(), 1500);
+  } catch (err) {
+    if (err && err.authExpired) return;
+    toast(`删除失败: ${err.message}`, 'error');
+  }
+}
+
+// ============ 启动 ============
+// 页面初始化在 DOMContentLoaded 事件里(见上方),此处无额外入口。
+</script>
+<script src="nginx-guide.js"></script>
+</body>
+</html>
