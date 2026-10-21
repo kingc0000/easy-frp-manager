@@ -75,14 +75,26 @@ function frpsProxyBackendText(proxy) {
 
 function renderNginxGuideModal(proxy) {
   const domains = proxy.custom_domains || [];
-  // 默认证书路径占位(模板列表加载后会探测宿主真实证书并覆盖):
-  // 优先 /etc/nginx/certs 下的通配符证书(service.235300.xyz 体系)
-  const zone = (domains[0] || '').split('.').slice(-2).join('.');
-  nginxGuideState.zone = zone;  // 供 loadNginxTemplates 按域名匹配子目录证书
-  // 默认证书路径占位(模板列表加载后会探测宿主真实证书并按 zone 匹配覆盖):
-  // 证书体系支持 /etc/nginx/certs/<zone>/<name>.crt 子目录形式(如 oracle.235301.xyz/oracle.crt)
-  const defaultCertPath = `/etc/nginx/certs/service.${zone || 'example.com'}.crt`;
-  const defaultKeyPath = defaultCertPath.slice(0, -4) + '.key';
+  // 通配符证书路径占位(模板列表加载后会探测宿主真实证书并按 zone 匹配覆盖)。
+  // 与一键部署脚本 setup-server.sh 的存放约定保持一致:
+  //   cert_dir="/etc/nginx/certs/$SUBDOMAIN.$DOMAIN"
+  //   cert      $cert_dir/$SUBDOMAIN.crt
+  //   key       $cert_dir/$SUBDOMAIN.key
+  // 即:证书目录 = {SUBDOMAIN}.{DOMAIN}(=通配符域),证书文件 = {SUBDOMAIN}.crt(去掉应用子名)。
+  // 例:代理域 fnos.server.235300.xyz -> SUBDOMAIN=server DOMAIN=235300.xyz
+  //     -> /etc/nginx/certs/server.235300.xyz/server.crt(.key)
+  const labels = (domains[0] || '').split('.').filter(Boolean);
+  // SUBDOMAIN = 倒数第三段(代理域通常为 app.SUBDOMAIN.DOMAIN 三段以上);
+  // DOMAIN = 倒数两段(公网注册域)。退化(<3 段)用占位 example.com 兜底。
+  let subdomain = labels.length >= 3 ? labels[labels.length - 3] : '';
+  const domain = labels.length >= 2 ? labels.slice(-2).join('.') : '';
+  const zone = (subdomain && domain) ? `${subdomain}.${domain}` : (domain || 'example.com');
+  if (!subdomain) subdomain = 'service';  // <3 段退化:用占位前缀,等探测覆盖
+  nginxGuideState.zone = zone;  // 供 loadNginxTemplates 按子目录名精确匹配
+  const defaultCertPath = `/etc/nginx/certs/${zone}/${subdomain}.crt`;
+  const defaultKeyPath = `/etc/nginx/certs/${zone}/${subdomain}.key`;
+  nginxGuideState.defaultCertPath = defaultCertPath;
+  nginxGuideState.defaultKeyPath = defaultKeyPath;
 
   // 占位配置:先把 nginx 配置塞到变量,后面更新
   const initialConfig = generateNginxConfigLive();
@@ -223,8 +235,8 @@ function generateNginxConfigLive() {
   if (ssl) {
     cfg += `    listen 443 ssl;\n`;
     cfg += `    server_name ${domains.join(' ')};\n\n`;
-    cfg += `    ssl_certificate     ${certPath || '/etc/nginx/certs/service.example.crt'};\n`;
-    cfg += `    ssl_certificate_key ${keyPath || '/etc/nginx/certs/service.example.key'};\n`;
+    cfg += `    ssl_certificate     ${certPath || nginxGuideState.defaultCertPath || '/etc/nginx/certs/example.com/service.crt'};\n`;
+    cfg += `    ssl_certificate_key ${keyPath || nginxGuideState.defaultKeyPath || '/etc/nginx/certs/example.com/service.key'};\n`;
     cfg += `    ssl_protocols TLSv1.2 TLSv1.3;\n    ssl_ciphers HIGH:!aNULL:!MD5;\n\n`;
   } else {
     cfg += `    listen 80;\n`;
@@ -298,9 +310,12 @@ async function loadNginxTemplates() {
     if (picked) {
       const cInput = document.getElementById('nginx-cert-path');
       const kInput = document.getElementById('nginx-key-path');
-      // 初始占位值特征:/etc/ssl/frpm/(旧) 或含 /certs/service. 前缀(新占位,由 renderNginxGuideModal 生成)
+      // 仅当证书框仍为初始占位值(与 renderNginxGuideModal 计算的默认路径一致,
+      // 或含旧占位特征)且未被用户编辑时才覆盖——避免覆盖用户手填的真实路径
       if (cInput && !cInput.dataset.userEdited &&
-          (cInput.value.includes('/etc/ssl/frpm/') || cInput.value.includes('/certs/service.'))) {
+          (cInput.value === (nginxGuideState.defaultCertPath || '') ||
+           cInput.value.includes('/etc/ssl/frpm/') ||
+           cInput.value.includes('/certs/service.'))) {
         cInput.value = picked.crt;
         if (kInput) kInput.value = picked.key;
       }
