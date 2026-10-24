@@ -14,6 +14,7 @@ import shutil
 import socket
 import subprocess
 import time
+import threading
 import urllib.request
 import urllib.error
 import base64
@@ -335,11 +336,7 @@ def api_update_instance(ctx):
 
     result = {"success": True}
     if restart:
-        if inst["deploy_mode"] == "binary":
-            restart_result = _restart_frpc_instance(inst)
-        else:
-            restart_result = frp_ops.restart_instance(inst["name"])
-        result["restart"] = restart_result
+        result["restart"] = _deferred_restart_frpc_instance(inst)
     return 200, result
 
 
@@ -488,6 +485,51 @@ def _restart_frpc_instance(inst):
     return frp_ops.restart_binary_instance(inst["name"], inst["config_path"], inst["type"])
 
 
+# === 延迟重启：避免管理面板隧道被同步重启掐断 ===
+# 问题场景:frpm 面板自身也通过某个被管理的 frpc 实例的隧道对外提供访问时,
+# 增删改该实例的代理会在 return 响应之前同步重启 frpc 进程,把正在返回的
+# HTTP 响应掐断,frp 服务端发现 vhost 代理消失后回自己的 404 页面(操作实际
+# 成功,但浏览器收到 404)。
+# 修复:先让响应返回浏览器,再延迟 1 秒后台重启。同一实例的多次连续操作合并
+# (取消旧的 Timer,只保留最新配置对应的一次重启)。
+
+_RESTART_TIMERS = {}
+_RESTART_LOCK = threading.Lock()
+
+
+def _deferred_restart_frpc_instance(inst, delay=1.0):
+    """延迟重启 frpc 实例:让当前 HTTP 响应先返回浏览器,再在后台重启。
+
+    同一实例的待执行重启会合并:连续增删改只触发一次重启(用最新磁盘配置)。
+    """
+    inst_id = inst["id"]
+    with _RESTART_LOCK:
+        old = _RESTART_TIMERS.pop(inst_id, None)
+        if old is not None:
+            old.cancel()
+        t = threading.Timer(delay, _restart_worker, args=(inst,))
+        t.daemon = True
+        _RESTART_TIMERS[inst_id] = t
+        t.start()
+    return {"success": True, "delayed": True, "delay": delay}
+
+
+def _restart_worker(inst):
+    """Timer 回调:真正执行重启(binary/docker 模式都走此路径)。"""
+    with _RESTART_LOCK:
+        _RESTART_TIMERS.pop(inst.get("id"), None)
+    try:
+        if inst.get("deploy_mode") == "binary":
+            frp_ops.restart_binary_instance(
+                inst["name"], inst.get("config_path"), inst.get("type")
+            )
+        else:
+            frp_ops.restart_instance(inst["name"])
+    except Exception as e:
+        # 重启失败不影响已完成的配置写盘;前端可稍后刷新实例状态发现
+        print(f"[frpm] deferred restart failed for {inst.get('name')}: {e}", flush=True)
+
+
 def _regenerate_frpc_config(instance_id):
     """从数据库重新生成 frpc TOML 配置文件。返回 (config_path, success, error)。
 
@@ -551,7 +593,7 @@ def api_create_proxy(ctx):
     if not ok:
         return 400, {"error": f"配置生成失败: {reg_err}", "proxy_id": proxy_id}
 
-    restart_result = _restart_frpc_instance(inst)
+    restart_result = _deferred_restart_frpc_instance(inst)
     return 201, {"proxy_id": proxy_id, "restart": restart_result}
 
 
@@ -578,7 +620,7 @@ def api_update_proxy(ctx):
     if not ok:
         return 400, {"error": f"配置生成失败: {reg_err}"}
 
-    restart_result = _restart_frpc_instance(inst)
+    restart_result = _deferred_restart_frpc_instance(inst)
     return 200, {"success": True, "restart": restart_result}
 
 
@@ -604,7 +646,7 @@ def api_toggle_proxy(ctx):
     if not ok:
         return 400, {"error": f"配置生成失败: {reg_err}"}
 
-    restart_result = _restart_frpc_instance(inst)
+    restart_result = _deferred_restart_frpc_instance(inst)
     return 200, {
         "success": True,
         "proxy_id": proxy_id,
@@ -632,7 +674,7 @@ def api_delete_proxy(ctx):
     if not ok:
         return 400, {"error": f"配置生成失败: {reg_err}"}
 
-    restart_result = _restart_frpc_instance(inst)
+    restart_result = _deferred_restart_frpc_instance(inst)
     return 200, {"success": True, "restart": restart_result}
 
 
@@ -677,7 +719,7 @@ def api_delete_frps_proxy(ctx):
     _, ok, reg_err = _regenerate_frpc_config(owner["id"])
     if not ok:
         return 400, {"error": f"配置生成失败: {reg_err}"}
-    restart_result = _restart_frpc_instance(owner)
+    restart_result = _deferred_restart_frpc_instance(owner)
     return 200, {"success": True, "deleted": name, "instance": owner["name"],
                  "restart": restart_result}
 
@@ -716,7 +758,7 @@ def api_batch_delete_frps_proxies(ctx):
             if not ok:
                 failed.append({"name": name, "error": f"配置生成失败: {reg_err}"})
                 continue
-            _restart_frpc_instance(owner)
+            _deferred_restart_frpc_instance(owner)
             deleted.append({"name": name, "instance": owner["name"]})
         except Exception as e:
             failed.append({"name": name, "error": str(e)})
@@ -881,7 +923,7 @@ def api_restart_instance(ctx):
     if not inst:
         return 404, {"error": "not found"}
     if inst["deploy_mode"] == "binary":
-        return 200, _restart_frpc_instance(inst)
+        return 200, _deferred_restart_frpc_instance(inst)
     return 200, frp_ops.restart_instance(inst["name"])
 
 
