@@ -66,6 +66,19 @@ def init_db():
                 transport_bandwidth_limit TEXT,
                 transport_use_encryption TEXT,
                 transport_use_compression TEXT,
+                auth_enabled    INTEGER NOT NULL DEFAULT 0,
+                auth_mode       TEXT,
+                auth_realm      TEXT,
+                auth_tokens     TEXT,
+                auth_token_header TEXT,
+                auth_token_param TEXT,
+                auth_strip_token INTEGER NOT NULL DEFAULT 0,
+                auth_bypass_paths TEXT,
+                auth_basic_user TEXT,
+                auth_basic_pass_hash TEXT,
+                auth_basic_salt TEXT,
+                auth_gate_port   INTEGER,
+                auth_token_expiry TEXT,
                 enabled         INTEGER NOT NULL DEFAULT 1,
                 created_at      INTEGER NOT NULL,
                 updated_at      INTEGER NOT NULL,
@@ -73,6 +86,30 @@ def init_db():
                 UNIQUE (instance_id, name)
             )
         """)
+        _migrate_proxies(conn)
+
+
+def _migrate_proxies(conn):
+    """为已存在的数据库补充新增列（幂等：已有列跳过）。"""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(proxies)")}
+    cols = [
+        ("auth_enabled", "INTEGER NOT NULL DEFAULT 0"),
+        ("auth_mode", "TEXT"),
+        ("auth_realm", "TEXT"),
+        ("auth_tokens", "TEXT"),
+        ("auth_token_header", "TEXT"),
+        ("auth_token_param", "TEXT"),
+        ("auth_strip_token", "INTEGER NOT NULL DEFAULT 0"),
+        ("auth_bypass_paths", "TEXT"),
+        ("auth_basic_user", "TEXT"),
+        ("auth_basic_pass_hash", "TEXT"),
+        ("auth_basic_salt", "TEXT"),
+        ("auth_gate_port", "INTEGER"),
+        ("auth_token_expiry", "TEXT"),
+    ]
+    for name, decl in cols:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE proxies ADD COLUMN {name} {decl}")
 
 
 @contextmanager
@@ -160,8 +197,12 @@ def set_setting(key, value):
 PROXY_JSON_FIELDS = {
     "custom_domains", "locations", "request_headers",
     "response_headers", "metadatas",
+    "auth_tokens", "auth_bypass_paths",
 }
-PROXY_BOOL_FIELDS = {"transport_use_encryption", "transport_use_compression"}
+PROXY_BOOL_FIELDS = {
+    "transport_use_encryption", "transport_use_compression",
+    "auth_enabled", "auth_strip_token",
+}
 
 
 def _row_to_proxy_dict(row):
@@ -254,6 +295,10 @@ def create_proxy(instance_id, proxy_data):
     # 会触发 NOT NULL 约束（被误报成"代理名重复"）——修复补默认
     row.setdefault("local_ip", "127.0.0.1")
     row.setdefault("local_port", 0)
+    # auth 列默认值：auth_enabled/auth_strip_token 是 NOT NULL DEFAULT 0，
+    # 显式 INSERT NULL 会触发约束（DEFAULT 仅在列省略时生效）——补默认
+    row.setdefault("auth_enabled", 0)
+    row.setdefault("auth_strip_token", 0)
 
     with get_db() as conn:
         cols = ["instance_id", "name", "type", "local_ip", "local_port",
@@ -263,7 +308,12 @@ def create_proxy(instance_id, proxy_data):
                 "request_headers", "response_headers", "metadatas",
                 "load_balancer_group", "load_balancer_group_key",
                 "transport_bandwidth_limit", "transport_use_encryption",
-                "transport_use_compression", "enabled", "created_at", "updated_at"]
+                "transport_use_compression",
+                "auth_enabled", "auth_mode", "auth_realm", "auth_tokens",
+                "auth_token_header", "auth_token_param", "auth_strip_token",
+                "auth_bypass_paths", "auth_basic_user", "auth_basic_pass_hash",
+                "auth_basic_salt", "auth_gate_port", "auth_token_expiry",
+                "enabled", "created_at", "updated_at"]
         placeholders = ",".join("?" for _ in cols)
         vals = [row.get(c) for c in cols]
         try:

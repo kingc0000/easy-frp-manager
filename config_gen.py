@@ -136,6 +136,15 @@ class Proxy:
     transport_bandwidth_limit: Optional[str] = None
     transport_use_encryption: Optional[bool] = None
     transport_use_compression: Optional[bool] = None
+    # auth-gate:启用后在本地监听 gate_port 做鉴权,再把流量转到 local_port
+    auth_enabled: Optional[bool] = False
+    auth_gate_port: Optional[int] = None
+
+    def _effective_local_port(self) -> int:
+        """启用 auth-gate 时,frpc 应把流量打到鉴权网关端口而不是真实后端端口。"""
+        if self.auth_enabled and self.auth_gate_port:
+            return self.auth_gate_port
+        return self.local_port
 
     def to_toml_block(self) -> str:
         """生成 [[proxies]] 块。"""
@@ -143,15 +152,17 @@ class Proxy:
         lines.append(f'name = "{self.name}"')
         lines.append(f'type = "{self.type}"')
 
+        eff_port = self._effective_local_port()
+
         if self.type in ("tcp", "udp"):
             lines.append(f'localIP = "{self.local_ip}"')
-            lines.append(f'localPort = {self.local_port}')
+            lines.append(f'localPort = {eff_port}')
             if self.remote_port:
                 lines.append(f'remotePort = {self.remote_port}')
 
         if self.type == "http":
             lines.append(f'localIP = "{self.local_ip}"')
-            lines.append(f'localPort = {self.local_port}')
+            lines.append(f'localPort = {eff_port}')
             if self.subdomain:
                 lines.append(f'subdomain = "{self.subdomain}"')
             if self.custom_domains:
@@ -173,7 +184,7 @@ class Proxy:
 
         if self.type == "https":
             lines.append(f'localIP = "{self.local_ip}"')
-            lines.append(f'localPort = {self.local_port}')
+            lines.append(f'localPort = {eff_port}')
             if self.subdomain:
                 lines.append(f'subdomain = "{self.subdomain}"')
             if self.custom_domains:
@@ -181,7 +192,7 @@ class Proxy:
 
         if self.type in ("stcp", "xtcp"):
             lines.append(f'localIP = "{self.local_ip}"')
-            lines.append(f'localPort = {self.local_port}')
+            lines.append(f'localPort = {eff_port}')
             if self.secret_key:
                 lines.append(f'secretKey = "{self.secret_key}"')
 

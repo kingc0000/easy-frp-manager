@@ -10,6 +10,7 @@
 
 import os
 import re
+import json
 import shutil
 import socket
 import subprocess
@@ -22,6 +23,7 @@ import tomllib
 from pathlib import Path
 
 import auth
+import auth_gate
 import config_gen
 import db
 import frp_ops
@@ -374,6 +376,8 @@ def _proxy_row_to_config_proxy(p):
         transport_bandwidth_limit=p.get("transport_bandwidth_limit"),
         transport_use_encryption=p.get("transport_use_encryption"),
         transport_use_compression=p.get("transport_use_compression"),
+        auth_enabled=bool(p.get("auth_enabled")),
+        auth_gate_port=p.get("auth_gate_port"),
     )
 
 
@@ -530,6 +534,79 @@ def _restart_worker(inst):
         print(f"[frpm] deferred restart failed for {inst.get('name')}: {e}", flush=True)
 
 
+def _allocate_gate_port() -> int:
+    """从端口池 16384-19999 分配一个空闲的 auth-gate 端口。"""
+    used = set()
+    for inst in db.list_instances():
+        for p in db.list_proxies(inst["id"]):
+            if p.get("auth_gate_port"):
+                used.add(p["auth_gate_port"])
+    for port in range(16384, 20000):
+        if port not in used:
+            return port
+    raise RuntimeError("auth-gate 端口池耗尽(16384-19999)")
+
+
+def _hash_basic_password(data: dict) -> dict:
+    """如果 data 含明文 auth_basic_password,哈希后替换为 auth_basic_pass_hash + auth_basic_salt。
+
+    明文密码不落库;存储 PBKDF2 hash + salt(复用 auth.py 算法)。
+    """
+    plain = data.pop("auth_basic_password", None)
+    if plain:
+        salt_hex = os.urandom(16).hex()
+        data["auth_basic_pass_hash"] = auth.hash_password(plain, salt_hex)
+        data["auth_basic_salt"] = salt_hex
+    return data
+
+
+def _regenerate_auth_gate_rules():
+    """重新生成 auth-gate 规则文件并重载/启停进程。
+
+    遍历所有 frpc 实例的 auth-enabled+enabled 代理,构建规则 JSON。
+    有规则 → reload(start) auth-gate;无规则 → stop + 删规则文件。
+    """
+    rules = {}
+    for inst in db.list_instances():
+        if inst["type"] != "frpc":
+            continue
+        for p in db.list_proxies(inst["id"]):
+            if not p.get("enabled") or not p.get("auth_enabled"):
+                continue
+            rules[str(p["id"])] = {
+                "gate_port": p["auth_gate_port"],
+                "backend_host": p["local_ip"],
+                "backend_port": p["local_port"],
+                "mode": p.get("auth_mode") or "none",
+                "realm": p.get("auth_realm") or "Restricted",
+                "tokens": p.get("auth_tokens") or [],
+                "token_header": p.get("auth_token_header") or "X-API-Key",
+                "token_param": p.get("auth_token_param") or "token",
+                "strip_token": bool(p.get("auth_strip_token")),
+                "bypass_paths": p.get("auth_bypass_paths") or [],
+                "token_expiry": p.get("auth_token_expiry") or None,
+                "basic": {
+                    "user": p.get("auth_basic_user") or "",
+                    "pass_hash": p.get("auth_basic_pass_hash") or "",
+                    "salt": p.get("auth_basic_salt") or "",
+                } if p.get("auth_basic_user") else None,
+            }
+
+    rule_path = str(CONFIG_DIR / "auth-gate.json")
+    if not rules:
+        frp_ops.stop_auth_gate()
+        try:
+            os.remove(rule_path)
+        except OSError:
+            pass
+        return {"success": True, "rules": 0}
+
+    with open(rule_path, "w") as f:
+        json.dump(rules, f)
+    reload_result = frp_ops.reload_auth_gate()
+    return {"success": reload_result.get("success", False), "rules": len(rules), "detail": reload_result}
+
+
 def _regenerate_frpc_config(instance_id):
     """从数据库重新生成 frpc TOML 配置文件。返回 (config_path, success, error)。
 
@@ -559,6 +636,7 @@ def _regenerate_frpc_config(instance_id):
         with open(config_path, "w") as f:
             f.write(cfg.to_toml())
         db.update_instance(instance_id, {"updated_at": int(time.time())})
+        _regenerate_auth_gate_rules()
         return config_path, True, None
     except Exception as e:
         return config_path, False, str(e)
@@ -584,6 +662,11 @@ def api_create_proxy(ctx):
         return err
 
     proxy_data = ctx["body"] or {}
+    # auth-gate:启用鉴权时自动分配端口 + 哈希明文密码
+    if proxy_data.get("auth_enabled"):
+        if not proxy_data.get("auth_gate_port"):
+            proxy_data["auth_gate_port"] = _allocate_gate_port()
+    proxy_data = _hash_basic_password(proxy_data)
     try:
         proxy_id = db.create_proxy(instance_id, proxy_data)
     except ValueError as e:
@@ -611,6 +694,11 @@ def api_update_proxy(ctx):
         return 404, {"error": "代理不存在"}
 
     proxy_data = ctx["body"] or {}
+    # auth-gate:启用鉴权时自动分配端口(无则补) + 哈希明文密码
+    if proxy_data.get("auth_enabled"):
+        if not proxy_data.get("auth_gate_port"):
+            proxy_data["auth_gate_port"] = _allocate_gate_port()
+    proxy_data = _hash_basic_password(proxy_data)
     try:
         db.update_proxy(proxy_id, proxy_data)
     except ValueError as e:
@@ -790,6 +878,126 @@ def api_delete_instance(ctx):
     if db.delete_instance(instance_id):
         result["deleted"]["db"] = instance_id
     return 200, result
+
+
+# ──────────────────────────────────────────────
+# auth-gate P2：状态面板 / token 预演 / 鉴权统计
+# ──────────────────────────────────────────────
+
+def _load_gate_rules():
+    """读取 auth-gate 规则文件，返回 {proxy_id: rule} 或空 dict。"""
+    path = CONFIG_DIR / "auth-gate.json"
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _build_rule_from_proxy(p):
+    """从数据库行构建单条 auth-gate 规则（供 test-token 端点使用）。"""
+    return {
+        "gate_port": p.get("auth_gate_port"),
+        "backend_host": p.get("local_ip"),
+        "backend_port": p.get("local_port"),
+        "mode": p.get("auth_mode") or "none",
+        "realm": p.get("auth_realm") or "Restricted",
+        "tokens": p.get("auth_tokens") or [],
+        "token_header": p.get("auth_token_header") or "X-API-Key",
+        "token_param": p.get("auth_token_param") or "token",
+        "strip_token": bool(p.get("auth_strip_token")),
+        "bypass_paths": p.get("auth_bypass_paths") or [],
+        "token_expiry": p.get("auth_token_expiry") or None,
+        "basic": {
+            "user": p.get("auth_basic_user") or "",
+            "pass_hash": p.get("auth_basic_pass_hash") or "",
+            "salt": p.get("auth_basic_salt") or "",
+        } if p.get("auth_basic_user") else None,
+    }
+
+
+@app.post("/api/auth-gate/test-token")
+def api_auth_gate_test_token(ctx):
+    """token 预演：给 proxy_id + 凭证，返回鉴权结果（不转发请求）。
+
+    body: {proxy_id, token?, basic_user?, basic_pass?, path?}
+    返回: {ok, reason, matched}
+    """
+    body = ctx["body"] or {}
+    proxy_id = body.get("proxy_id")
+    if not proxy_id:
+        return 400, {"error": "proxy_id required"}
+    proxy = db.get_proxy(int(proxy_id))
+    if not proxy:
+        return 404, {"error": "代理不存在"}
+    rule = _build_rule_from_proxy(proxy)
+    ok, reason, matched = auth_gate.check_token(
+        rule,
+        {
+            "token": body.get("token") or "",
+            "basic_user": body.get("basic_user") or "",
+            "basic_pass": body.get("basic_pass") or "",
+            "path": body.get("path") or "/",
+        },
+    )
+    return 200, {"ok": ok, "reason": reason, "matched": matched}
+
+
+@app.get("/api/auth-gate/status")
+def api_auth_gate_status(ctx):
+    """auth-gate 状态面板：进程状态 + 每个代理的端口/后端/模式。"""
+    proc = frp_ops.auth_gate_status()
+    rules = _load_gate_rules()
+    proxies = []
+    for proxy_id_str, rule in rules.items():
+        p = db.get_proxy(int(proxy_id_str))
+        proxies.append({
+            "proxy_id": int(proxy_id_str),
+            "proxy_name": p.get("name") if p else "?",
+            "instance_id": p.get("instance_id") if p else None,
+            "gate_port": rule.get("gate_port"),
+            "backend_host": rule.get("backend_host"),
+            "backend_port": rule.get("backend_port"),
+            "mode": rule.get("mode"),
+            "realm": rule.get("realm"),
+            "token_expiry": rule.get("token_expiry"),
+        })
+    return 200, {
+        "process": proc,
+        "rules_count": len(rules),
+        "proxies": proxies,
+    }
+
+
+@app.get("/api/auth-gate/stats")
+def api_auth_gate_stats(ctx):
+    """按代理鉴权统计：从审计日志聚合成功/失败/原因。"""
+    raw = auth_gate.aggregate_stats()
+    rules = _load_gate_rules()
+    # 反向映射: gate_port → proxy_id → proxy_name
+    port_to_proxy = {}
+    for proxy_id_str, rule in rules.items():
+        port_to_proxy[rule.get("gate_port")] = {
+            "proxy_id": int(proxy_id_str),
+            "proxy_name": db.get_proxy(int(proxy_id_str)).get("name") if db.get_proxy(int(proxy_id_str)) else "?",
+        }
+    stats_list = []
+    for port_str, st in raw.items():
+        info = port_to_proxy.get(int(port_str), {})
+        entry = {
+            "gate_port": int(port_str) if port_str.isdigit() else port_str,
+            "proxy_id": info.get("proxy_id"),
+            "proxy_name": info.get("proxy_name", "?"),
+            "ok": st.get("ok", 0),
+            "fail": st.get("fail", 0),
+            "last_ts": st.get("last_ts", 0),
+            "reasons": st.get("reasons", {}),
+        }
+        stats_list.append(entry)
+    stats_list.sort(key=lambda x: x.get("last_ts", 0), reverse=True)
+    return 200, {"stats": stats_list}
 
 
 @app.post("/api/instances/:id/start")

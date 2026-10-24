@@ -357,7 +357,10 @@
           <div class="brand-sub"><span id="host-info"></span></div>
         </div>
       </div>
-      <div class="flex items-center gap-2 hidden" id="user-info"></div>
+      <div class="flex items-center gap-2">
+        <button onclick="showAuthGateStatus()" class="btn-ghost btn-sm" title="鉴权网关状态与统计">🛡 鉴权状态</button>
+        <div class="flex items-center gap-2 hidden" id="user-info"></div>
+      </div>
     </div>
   </header>
 
@@ -1926,6 +1929,7 @@ function renderProxyModal() {
             </div>
           </div>
           <div id="proxy-type-fields"></div>
+          <div id="proxy-auth-fields"></div>
         </form>
       </div>
       <div class="modal-foot">
@@ -1936,6 +1940,7 @@ function renderProxyModal() {
   `;
 
   renderProxyTypeFields(p.type || 'tcp');
+  renderAuthGateFields(p);
   document.getElementById('modal-container').classList.remove('hidden');
   document.getElementById('proxyForm').addEventListener('submit', submitProxy);
 }
@@ -1985,6 +1990,214 @@ function onProxyTypeChangeModal(type) {
   renderProxyTypeFields(type);
 }
 
+function renderAuthGateFields(p) {
+  const el = document.getElementById('proxy-auth-fields');
+  if (!el) return;
+  const enabled = p.auth_enabled === true || p.auth_enabled === 1;
+  const mode = p.auth_mode || 'basic';
+  const tokens = (p.auth_tokens || []).join('\n');
+  const bypass = (p.auth_bypass_paths || []).join('\n');
+  el.innerHTML = `
+    <div style="margin-top:1rem;border-top:1px solid var(--border-color);padding-top:.9rem;">
+      <label class="form-label" style="display:flex;align-items:center;gap:.5rem;cursor:pointer;">
+        <input type="checkbox" id="proxy-auth-enabled" ${enabled ? 'checked' : ''} onchange="onAuthToggle(this.checked)">
+        <span>🔒 鉴权网关</span>
+        <span class="form-hint" style="font-weight:normal;">在 frpc 侧加一层鉴权,请求先验证再转发到后端</span>
+      </label>
+      <div id="proxy-auth-config" style="${enabled ? '' : 'display:none;'}margin-top:.8rem;">
+        <div class="form-grid2" style="margin-bottom:.8rem;">
+          <div>
+            <label class="form-label">鉴权方式</label>
+            <select id="proxy-auth-mode" class="input" onchange="onAuthModeChange(this.value)">
+              <option value="basic" ${mode==='basic'?'selected':''}>Basic Auth(用户名+密码)</option>
+              <option value="bearer" ${mode==='bearer'?'selected':''}>Bearer Token</option>
+              <option value="apikey" ${mode==='apikey'?'selected':''}>API Key(自定义头)</option>
+              <option value="url_token" ${mode==='url_token'?'selected':''}>URL Token(?param=xxx)</option>
+              <option value="any" ${mode==='any'?'selected':''}>Any(任一命中)</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Realm(领域名)</label>
+            <input type="text" id="proxy-auth-realm" value="${p.auth_realm ? escapeHtml(p.auth_realm) : 'Protected'}" class="input">
+            <p class="form-hint">Basic Auth 弹窗显示的领域名</p>
+          </div>
+        </div>
+        <div id="proxy-auth-basic" style="display:none;margin-bottom:.8rem;">
+          <div class="form-grid2">
+            <div>
+              <label class="form-label">用户名</label>
+              <input type="text" id="proxy-auth-user" value="${p.auth_basic_user ? escapeHtml(p.auth_basic_user) : 'admin'}" class="input">
+            </div>
+            <div>
+              <label class="form-label">密码 ${p.auth_basic_pass_hash ? '(留空=不修改)' : ''}</label>
+              <input type="password" id="proxy-auth-pass" placeholder="${p.auth_basic_pass_hash ? '已设密码' : '输入密码'}" class="input">
+            </div>
+          </div>
+        </div>
+        <div id="proxy-auth-tokens" style="display:none;margin-bottom:.8rem;">
+          <label class="form-label">Token 列表 <span style="color:var(--danger-fg)">*</span></label>
+          <textarea id="proxy-auth-tokens-text" rows="3" class="input" style="resize:vertical;font-family:monospace;">${escapeHtml(tokens)}</textarea>
+          <p class="form-hint">每行一个 token,任何一行匹配即放行</p>
+        </div>
+        <div id="proxy-auth-apikey-header" style="display:none;margin-bottom:.8rem;">
+          <label class="form-label">自定义头名</label>
+          <input type="text" id="proxy-auth-token-header" value="${p.auth_token_header ? escapeHtml(p.auth_token_header) : 'X-API-Key'}" class="input">
+          <p class="form-hint">API Key 模式下检查的 HTTP 头名</p>
+        </div>
+        <div id="proxy-auth-url-token" style="display:none;margin-bottom:.8rem;">
+          <div class="form-grid2">
+            <div>
+              <label class="form-label">URL 参数名</label>
+              <input type="text" id="proxy-auth-token-param" value="${p.auth_token_param ? escapeHtml(p.auth_token_param) : 'token'}" class="input">
+            </div>
+            <div style="display:flex;align-items:center;gap:.5rem;padding-top:1.5rem;">
+              <input type="checkbox" id="proxy-auth-strip-token" ${p.auth_strip_token || p.auth_strip_token === 1 ? 'checked' : ''}>
+              <span class="form-hint">转发前剥离 URL 中的 token 参数</span>
+            </div>
+          </div>
+        </div>
+        <div style="margin-bottom:.8rem;">
+          <label class="form-label">例外路径(无需鉴权)</label>
+          <textarea id="proxy-auth-bypass" rows="2" class="input" style="resize:vertical;font-family:monospace;">${escapeHtml(bypass)}</textarea>
+          <p class="form-hint">每行一个路径,精确匹配或前缀匹配(如 /health)</p>
+        </div>
+        <div id="proxy-auth-expiry" style="display:none;margin-bottom:.8rem;">
+          <label class="form-label">Token 过期时间(可选)</label>
+          <input type="datetime-local" id="proxy-auth-token-expiry" value="${p.auth_token_expiry ? p.auth_token_expiry.slice(0,16) : ''}" class="input">
+          <p class="form-hint">到达此时间后所有 token 失效,留空=永不过期。格式:YYYY-MM-DDTHH:MM</p>
+        </div>
+        <div style="margin-bottom:.8rem;display:flex;gap:.6rem;flex-wrap:wrap;">
+          <button type="button" onclick="testAuthToken()" class="btn-secondary btn-sm">🧪 预演鉴权</button>
+        </div>
+        <div id="proxy-auth-test-result" style="display:none;"></div>
+      </div>
+    </div>
+  `;
+  onAuthModeChange(mode);
+}
+
+function onAuthToggle(checked) {
+  const cfg = document.getElementById('proxy-auth-config');
+  if (cfg) cfg.style.display = checked ? '' : 'none';
+}
+
+function onAuthModeChange(mode) {
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  const isBasic = mode === 'basic' || mode === 'any';
+  const isToken = mode === 'bearer' || mode === 'apikey' || mode === 'url_token' || mode === 'any';
+  show('proxy-auth-basic', isBasic);
+  show('proxy-auth-tokens', isToken);
+  show('proxy-auth-apikey-header', mode === 'apikey' || mode === 'any');
+  show('proxy-auth-url-token', mode === 'url_token' || mode === 'any');
+  show('proxy-auth-expiry', mode !== 'basic' && mode !== 'none' && mode !== 'any');
+}
+
+async function testAuthToken() {
+  const proxyId = proxyModalState.proxyId;
+  if (!proxyId) { toast('保存代理后才能预演鉴权', 'error'); return; }
+  const mode = document.getElementById('proxy-auth-mode')?.value || 'basic';
+  const creds = { path: '/' };
+  if (mode === 'basic' || mode === 'any') {
+    creds.basic_user = document.getElementById('proxy-auth-user')?.value || '';
+    creds.basic_pass = document.getElementById('proxy-auth-pass')?.value || '';
+  }
+  if (mode === 'bearer' || mode === 'apikey' || mode === 'url_token' || mode === 'any') {
+    const tokens = document.getElementById('proxy-auth-tokens-text')?.value || '';
+    creds.token = tokens.split('\n').map(s => s.trim()).filter(Boolean)[0] || '';
+  }
+  const resultEl = document.getElementById('proxy-auth-test-result');
+  try {
+    const r = await api(`/api/auth-gate/test-token`, { method: 'POST', body: JSON.stringify({ proxy_id: proxyId, ...creds }) });
+    if (r.ok) {
+      resultEl.style.display = 'block';
+      resultEl.innerHTML = `<div class="badge badge-green">✅ 通过</div> <span class="form-hint">匹配方式: ${r.matched || r.reason}</span>`;
+    } else {
+      resultEl.style.display = 'block';
+      resultEl.innerHTML = `<div class="badge badge-red">🚫 拒绝</div> <span class="form-hint">原因: ${escapeHtml(r.reason || 'unknown')}</span>`;
+    }
+  } catch (err) {
+    if (err && err.authExpired) return;
+    toast(`预演失败: ${err.message}`, 'error');
+  }
+}
+
+async function showAuthGateStatus() {
+  try {
+    const [status, stats] = await Promise.all([
+      api('/api/auth-gate/status'),
+      api('/api/auth-gate/stats'),
+    ]);
+    renderAuthGateModal(status, stats);
+  } catch (err) {
+    if (err && err.authExpired) return;
+    toast(`加载失败: ${err.message}`, 'error');
+  }
+}
+
+function renderAuthGateModal(status, stats) {
+  const proc = status.process || {};
+  const proxies = status.proxies || [];
+  const statsList = stats.stats || [];
+  const portToStats = {};
+  statsList.forEach(s => { portToStats[s.gate_port] = s; });
+
+  let proxiesHtml = '';
+  if (proxies.length === 0) {
+    proxiesHtml = '<p class="form-hint">暂无启用鉴权的代理</p>';
+  } else {
+    proxiesHtml = proxies.map(p => {
+      const st = portToStats[p.gate_port] || {};
+      const ok = st.ok || 0;
+      const fail = st.fail || 0;
+      const total = ok + fail;
+      const rate = total > 0 ? Math.round(ok / total * 100) : 0;
+      const lastTs = st.last_ts ? new Date(st.last_ts * 1000).toLocaleString() : '—';
+      const reasons = st.reasons || {};
+      let reasonHtml = '';
+      for (const [r, c] of Object.entries(reasons)) {
+        reasonHtml += `<span class="badge badge-red" style="margin:.2rem .3rem .2rem 0;">${escapeHtml(r)}: ${c}</span>`;
+      }
+      return `
+        <div class="panel" style="padding:.8rem;margin-bottom:.6rem;">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;">
+            <div>
+              <strong>${escapeHtml(p.proxy_name || '?')}</strong>
+              <span class="form-hint">端口 ${p.gate_port} → ${escapeHtml(p.backend_host)}:${p.backend_port}</span>
+            </div>
+            <span class="badge badge-blue">${escapeHtml(p.mode || 'none')}</span>
+          </div>
+          <div style="display:flex;gap:1.5rem;margin-top:.5rem;flex-wrap:wrap;">
+            <div><span class="form-hint">成功</span> <span style="color:var(--success-fg);font-weight:600;">${ok}</span></div>
+            <div><span class="form-hint">失败</span> <span style="color:var(--danger-fg);font-weight:600;">${fail}</span></div>
+            <div><span class="form-hint">通过率</span> <span style="font-weight:600;">${rate}%</span></div>
+            <div><span class="form-hint">最后活跃</span> <span>${lastTs}</span></div>
+          </div>
+          ${reasonHtml ? `<div style="margin-top:.4rem;">${reasonHtml}</div>` : ''}
+        </div>`;
+    }).join('');
+  }
+
+  const procStatus = proc.success
+    ? '<span class="badge badge-green">🟢 运行中</span>'
+    : '<span class="badge badge-gray">⚪ 未运行</span>';
+
+  openModal(`
+    <div style="max-width:42rem;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+        <h2 style="font-size:1.1rem;font-weight:700;margin:0;">🛡 鉴权网关状态</h2>
+        <button onclick="closeModal()" class="btn-ghost btn-icon">✕</button>
+      </div>
+      <div style="margin-bottom:1rem;">
+        <span class="form-hint">进程状态</span> ${procStatus}
+        ${proc.pid ? `<span class="form-hint">PID ${proc.pid}</span>` : ''}
+        <span class="form-hint">| 规则数 ${status.rules_count || 0}</span>
+        <button onclick="showAuthGateStatus()" class="btn-ghost btn-sm" style="margin-left:.5rem;">🔄 刷新</button>
+      </div>
+      <div id="auth-gate-proxies">${proxiesHtml}</div>
+    </div>
+  `);
+}
+
 async function submitProxy(e) {
   e.preventDefault();
 
@@ -2023,6 +2236,55 @@ async function submitProxy(e) {
   } else if (type === 'stcp' || type === 'xtcp') {
     data.secret_key = document.getElementById('proxy-secret-key').value.trim();
     delete data.remote_port; delete data.custom_domains; delete data.subdomain;
+  }
+
+  // 鉴权网关字段
+  const authEnabled = document.getElementById('proxy-auth-enabled');
+  if (authEnabled) {
+    if (authEnabled.checked) {
+      data.auth_enabled = true;
+      data.auth_mode = document.getElementById('proxy-auth-mode').value;
+      data.auth_realm = document.getElementById('proxy-auth-realm').value.trim() || 'Protected';
+      // basic
+      const basicEl = document.getElementById('proxy-auth-basic');
+      if (basicEl && basicEl.style.display !== 'none') {
+        data.auth_basic_user = document.getElementById('proxy-auth-user').value.trim() || 'admin';
+        const passVal = document.getElementById('proxy-auth-pass').value;
+        if (passVal) data.auth_basic_password = passVal;  // 仅在用户输入时发送(后端 hash 后存储)
+      } else {
+        delete data.auth_basic_password;  // 非 basic 模式不传密码
+      }
+      // tokens (bearer/apikey/url_token/any)
+      const tokensEl = document.getElementById('proxy-auth-tokens');
+      if (tokensEl && tokensEl.style.display !== 'none') {
+        data.auth_tokens = document.getElementById('proxy-auth-tokens-text').value
+          .split('\n').map(s => s.trim()).filter(Boolean);
+      } else {
+        data.auth_tokens = [];
+      }
+      // apikey header
+      const headerEl = document.getElementById('proxy-auth-apikey-header');
+      if (headerEl && headerEl.style.display !== 'none') {
+        data.auth_token_header = document.getElementById('proxy-auth-token-header').value.trim() || 'X-API-Key';
+      }
+      // url_token param + strip
+      const urlEl = document.getElementById('proxy-auth-url-token');
+      if (urlEl && urlEl.style.display !== 'none') {
+        data.auth_token_param = document.getElementById('proxy-auth-token-param').value.trim() || 'token';
+        data.auth_strip_token = document.getElementById('proxy-auth-strip-token').checked ? 1 : 0;
+      }
+      // bypass paths
+      data.auth_bypass_paths = document.getElementById('proxy-auth-bypass').value
+        .split('\n').map(s => s.trim()).filter(Boolean);
+      // token expiry
+      const expiryEl = document.getElementById('proxy-auth-expiry');
+      if (expiryEl && expiryEl.style.display !== 'none') {
+        const val = document.getElementById('proxy-auth-token-expiry').value;
+        data.auth_token_expiry = val ? val + ':00' : null;
+      }
+    } else {
+      data.auth_enabled = false;
+    }
   }
 
   try {

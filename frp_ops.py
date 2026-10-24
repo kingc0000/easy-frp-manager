@@ -11,6 +11,7 @@ Docker 模式通过 docker python SDK 操作,需要在容器外(或挂载 docker
 import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -656,3 +657,93 @@ def list_frp_containers() -> list:
     except Exception as e:
         result.append({"error": str(e)})
     return result
+
+
+# ============ Auth Gate 进程管理 ============
+# auth-gate 是一个独立进程(python3 auth_gate.py),统一管理所有 auth-enabled 代理
+# 的鉴权监听端口。通过 PID 文件跟踪 + /proc 存活检查,与 frp 实例同模式。
+
+AUTH_GATE_PIDFILE = os.path.join(PROC_DIR, "auth-gate.pid")
+AUTH_GATE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auth_gate.py")
+
+
+def auth_gate_pid() -> Optional[int]:
+    """读取 auth-gate 进程 PID(带 /proc 存活校验)。"""
+    try:
+        with open(AUTH_GATE_PIDFILE) as f:
+            pid = int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+    if not os.path.isdir(f"/proc/{pid}"):
+        return None
+    return pid
+
+
+def start_auth_gate() -> dict:
+    """启动 auth-gate 进程(幂等:已在运行则返回现状)。"""
+    if auth_gate_pid():
+        return {"success": True, "running": True, "pid": auth_gate_pid()}
+    if not os.path.isfile(AUTH_GATE_SCRIPT):
+        return {"success": False, "error": f"auth_gate.py 不存在: {AUTH_GATE_SCRIPT}"}
+    try:
+        os.makedirs(PROC_DIR, exist_ok=True)
+        log_path = os.path.join(_log_dir(), "auth-gate.log")
+        with open(log_path, "ab") as logf:
+            proc = subprocess.Popen(
+                [sys.executable, AUTH_GATE_SCRIPT],
+                stdout=logf, stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                cwd="/",
+                start_new_session=True,
+            )
+        _write_pid("auth-gate", proc.pid)
+        time.sleep(0.8)
+        pid = auth_gate_pid()
+        if not pid:
+            return {"success": False, "error": "auth-gate 启动后退出(可能无 auth 代理)"}
+        return {"success": True, "running": True, "pid": pid}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def reload_auth_gate() -> dict:
+    """SIGHUP 重载 auth-gate 规则(未运行时尝试启动)。"""
+    pid = auth_gate_pid()
+    if not pid:
+        return start_auth_gate()
+    try:
+        os.kill(pid, signal.SIGHUP)
+        return {"success": True, "running": True, "pid": pid, "reloaded": True}
+    except ProcessLookupError:
+        return {"success": False, "error": "auth-gate 进程不存在"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def stop_auth_gate() -> dict:
+    """停止 auth-gate 进程。"""
+    pid = auth_gate_pid()
+    if not pid:
+        return {"success": True, "running": False}
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    # 等待退出
+    for _ in range(20):
+        if not os.path.isdir(f"/proc/{pid}"):
+            break
+        time.sleep(0.1)
+    try:
+        os.remove(AUTH_GATE_PIDFILE)
+    except OSError:
+        pass
+    return {"success": True, "running": False}
+
+
+def auth_gate_status() -> dict:
+    """auth-gate 运行状态。"""
+    pid = auth_gate_pid()
+    return {"running": pid is not None, "pid": pid}
