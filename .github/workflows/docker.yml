@@ -43,7 +43,7 @@ jobs:
         with:
           images: |
             mejeor/easy-frp-manager
-            ghcr.io/kingc0000/easy-frp-manager
+            ghcr.io/${{ github.repository_owner }}/easy-frp-manager
           tags: |
             type=raw,value=latest
             type=semver,pattern={{version}}
@@ -59,3 +59,14 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Make GHCR package public
+        if: github.event_name != 'pull_request'
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          curl -s -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            -d '{"visibility":"public"}' \
+            "https://api.github.com/user/packages/container/easy-frp-manager" || true
