@@ -1777,15 +1777,24 @@ async function toggleInstanceProxies(instanceId, linkEl) {
   }
 }
 
-async function loadInstanceProxies(instanceId) {
+async function loadInstanceProxies(instanceId, attempts = 3) {
   const content = document.getElementById(`proxies-content-${instanceId}`);
   if (!content) return;
-  try {
-    const data = await api(`/api/instances/${instanceId}/proxies`);
-    renderProxyList(instanceId, data.proxies || []);
-  } catch (e) {
-    if (e && e.authExpired) return;
-    content.innerHTML = `<div style="color:var(--danger-fg);font-size:.85rem;">加载失败: ${e.message}</div>`;
+  // 代理操作会延迟重启 frpc,期间(约 1-3s)请求可能撞上隧道断连返回 404——
+  // 自动重试避开窗口,避免实例模块显示"加载失败"需要手动刷新恢复。
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const data = await api(`/api/instances/${instanceId}/proxies`);
+      renderProxyList(instanceId, data.proxies || []);
+      return;
+    } catch (e) {
+      if (e && e.authExpired) return;
+      if (i < attempts - 1) {
+        await new Promise((r) => setTimeout(r, 800 * (i + 1)));
+        continue;
+      }
+      content.innerHTML = `<div style="color:var(--danger-fg);font-size:.85rem;">加载失败: ${e.message} <button class="btn-ghost btn-sm" style="color:var(--info-fg)" onclick="loadInstanceProxies(${instanceId})">重试</button></div>`;
+    }
   }
 }
 function renderProxyList(instanceId, proxies) {
@@ -2033,11 +2042,11 @@ async function submitProxy(e) {
       toast('代理已创建,实例重启中...', 'success');
     }
     closeModal();
-    // 刷新代理列表和实例列表
+    // 刷新代理列表和实例列表:延迟等待 frpc 延迟重启完成(1s)+重连,避开隧道断连窗口
     if (expandedInstances[instanceId]) {
-      await loadInstanceProxies(instanceId);
+      setTimeout(() => loadInstanceProxies(instanceId), 2200);
     }
-    setTimeout(() => loadInstances(), 1500);
+    setTimeout(() => loadInstances(), 3500);
   } catch (err) {
     if (err && err.authExpired) return;  // 401 已跳登录
     toast(`保存失败: ${err.message}`, 'error');
@@ -2052,8 +2061,8 @@ async function toggleProxy(instanceId, proxyId, enabled) {
       busy: enabled ? '正在启用代理并重启实例...' : '正在禁用代理并重启实例...',
     });
     toast(enabled ? '已启用,实例重启中...' : '已禁用,实例重启中...', 'success');
-    await loadInstanceProxies(instanceId);
-    setTimeout(() => loadInstances(), 1500);
+    setTimeout(() => loadInstanceProxies(instanceId), 2200);
+    setTimeout(() => loadInstances(), 3500);
   } catch (err) {
     if (err && err.authExpired) return;
     toast(`操作失败: ${err.message}`, 'error');
@@ -2065,8 +2074,8 @@ async function deleteProxy(instanceId, proxyId, name) {
   try {
     await api(`/api/instances/${instanceId}/proxies/${proxyId}`, { method: 'DELETE', busy: '正在删除代理并重启实例...' });
     toast('代理已删除,实例重启中...', 'success');
-    await loadInstanceProxies(instanceId);
-    setTimeout(() => loadInstances(), 1500);
+    setTimeout(() => loadInstanceProxies(instanceId), 2200);
+    setTimeout(() => loadInstances(), 3500);
   } catch (err) {
     if (err && err.authExpired) return;
     toast(`删除失败: ${err.message}`, 'error');
@@ -2081,8 +2090,8 @@ async function deleteFrpsProxy(instanceId, name) {
   try {
     const r = await api(`/api/instances/${instanceId}/frps-proxies/${encodeURIComponent(name)}`, { method: 'DELETE', busy: '正在删除离线代理...' });
     toast(`已删除 ${name}(所属实例: ${r.instance}),实例重启中...`, 'success');
-    await loadFrpsStatus(instanceId);
-    setTimeout(() => loadInstances(), 1500);
+    setTimeout(() => loadFrpsStatus(instanceId), 2200);
+    setTimeout(() => loadInstances(), 3500);
   } catch (err) {
     if (err && err.authExpired) return;
     toast(`删除失败: ${err.message}`, 'error');
