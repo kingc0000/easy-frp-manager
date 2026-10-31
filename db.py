@@ -79,6 +79,13 @@ def init_db():
                 auth_basic_salt TEXT,
                 auth_gate_port   INTEGER,
                 auth_token_expiry TEXT,
+                auth_upstream_mode  TEXT,
+                auth_upstream_token TEXT,
+                auth_upstream_header TEXT,
+                auth_upstream_param TEXT,
+                auth_upstream_user  TEXT,
+                auth_upstream_pass  TEXT,
+                auth_upstream_cookie INTEGER NOT NULL DEFAULT 0,
                 enabled         INTEGER NOT NULL DEFAULT 1,
                 created_at      INTEGER NOT NULL,
                 updated_at      INTEGER NOT NULL,
@@ -106,6 +113,13 @@ def _migrate_proxies(conn):
         ("auth_basic_salt", "TEXT"),
         ("auth_gate_port", "INTEGER"),
         ("auth_token_expiry", "TEXT"),
+        ("auth_upstream_mode", "TEXT"),
+        ("auth_upstream_token", "TEXT"),
+        ("auth_upstream_header", "TEXT"),
+        ("auth_upstream_param", "TEXT"),
+        ("auth_upstream_user", "TEXT"),
+        ("auth_upstream_pass", "TEXT"),
+        ("auth_upstream_cookie", "INTEGER NOT NULL DEFAULT 0"),
     ]
     for name, decl in cols:
         if name not in existing:
@@ -313,6 +327,9 @@ def create_proxy(instance_id, proxy_data):
                 "auth_token_header", "auth_token_param", "auth_strip_token",
                 "auth_bypass_paths", "auth_basic_user", "auth_basic_pass_hash",
                 "auth_basic_salt", "auth_gate_port", "auth_token_expiry",
+                "auth_upstream_mode", "auth_upstream_token", "auth_upstream_header",
+                "auth_upstream_param", "auth_upstream_user", "auth_upstream_pass",
+                "auth_upstream_cookie",
                 "enabled", "created_at", "updated_at"]
         placeholders = ",".join("?" for _ in cols)
         vals = [row.get(c) for c in cols]
