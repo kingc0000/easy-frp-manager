@@ -334,7 +334,7 @@
     <div id="login-error" class="login-err hidden"></div>
     <form onsubmit="doLogin(event)">
       <label for="login-username">用户名</label>
-      <input type="text" id="login-username" class="input" value="admin" required autofocus>
+      <input type="text" id="login-username" class="input" value="" required autofocus>
       <div style="height:.8rem"></div>
       <label for="login-password">密码</label>
       <input type="password" id="login-password" class="input" required>
@@ -358,6 +358,11 @@
         </div>
       </div>
       <div class="flex items-center gap-2">
+        <a href="https://github.com/kingc0000/easy-frp-manager" target="_blank" rel="noopener" class="btn-ghost btn-sm" title="GitHub 仓库" style="text-decoration:none;display:inline-flex;align-items:center;gap:.35rem;">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+          <span>GitHub</span>
+        </a>
+        <span class="btn-ghost btn-sm" style="cursor:default;font-variant-numeric:tabular-nums;" title="frpm 版本">v1.2.1</span>
         <button onclick="showAuthGateStatus()" class="btn-ghost btn-sm" title="鉴权网关状态与统计">🛡 鉴权状态</button>
         <div class="flex items-center gap-2 hidden" id="user-info"></div>
       </div>
@@ -953,8 +958,8 @@ function showNewInstanceModal() {
   newInstanceState = {
     type: 'frpc',
     deploy_mode: 'binary',
-    servers: [{ name: 'default', serverAddr: '', serverPort: 2005, token: '' }],
-    proxies: [{ name: 'nas-web', type: 'http', local_ip: '127.0.0.1', local_port: 8080, custom_domains: ['vault.example.com'], subdomain: '' }]
+    servers: [{ name: 'default', serverAddr: '', serverPort: '', token: '' }],
+    proxies: [{ name: '', type: 'tcp', local_ip: '', local_port: '', remote_port: '', custom_domains: [], subdomain: '' }]
   };
   renderNewInstanceModal();
 }
@@ -1016,19 +1021,19 @@ function renderConfigFields() {
       <div class="form-grid2" style="margin-bottom:.8rem;">
         <div>
           <label class="form-label">监听地址 (bindAddr)</label>
-          <input type="text" name="bind_addr" value="0.0.0.0" class="input">
+          <input type="text" name="bind_addr" value="" class="input">
           <p class="form-hint">固定填 <code>0.0.0.0</code>,表示监听所有网卡</p>
         </div>
         <div>
           <label class="form-label">监听端口 (bindPort) <span style="color:var(--danger-fg)">*</span></label>
-          <input type="number" name="bind_port" value="2005" min="1" max="65535" class="input">
+          <input type="number" name="bind_port" value="" min="1" max="65535" class="input">
           <p class="form-hint">frpc 连接此端口。注意:需要在安全组放行此端口</p>
         </div>
       </div>
       <div class="form-grid2" style="margin-bottom:.8rem;">
         <div>
           <label class="form-label">HTTP 虚拟端口 (vhostHTTPPort)</label>
-          <input type="number" name="vhost_http_port" value="2006" min="1" max="65535" class="input">
+          <input type="number" name="vhost_http_port" value="" min="1" max="65535" class="input">
           <p class="form-hint" style="line-height:1.7;">
             <b>作用:</b> frps 接收「http 类型代理」流量的端口。访问链路:
             <code>浏览器 → nginx(443) → 本端口(2006) → frps 按域名(Host 头)路由 → 对应 frpc 代理</code>。<br>
@@ -1057,12 +1062,12 @@ function renderConfigFields() {
       <div class="form-grid2" style="margin-bottom:.8rem;">
         <div>
           <label class="form-label">心跳超时 (秒)</label>
-          <input type="number" name="transport_heartbeat_ttl" value="90" class="input">
+          <input type="number" name="transport_heartbeat_ttl" value="" class="input">
           <p class="form-hint">多久没心跳就断开,默认 90 秒</p>
         </div>
         <div>
           <label class="form-label">TCP 保活间隔 (秒)</label>
-          <input type="number" name="transport_tcp_keepalive" value="7200" class="input">
+          <input type="number" name="transport_tcp_keepalive" value="" class="input">
           <p class="form-hint">保持连接不断,默认 7200 秒(2 小时)</p>
         </div>
       </div>
@@ -1078,23 +1083,23 @@ function renderConfigFields() {
           <div class="form-grid2" style="margin-bottom:.8rem;">
             <div>
               <label class="form-label">面板地址</label>
-              <input type="text" name="web_server_addr" value="127.0.0.1" class="input">
+              <input type="text" name="web_server_addr" value="" class="input">
               <p class="form-hint">127.0.0.1=仅本机可访问(更安全);0.0.0.0=对外开放</p>
             </div>
             <div>
               <label class="form-label">面板端口</label>
-              <input type="number" name="web_server_port" value="5067" min="1" max="65535" class="input">
+              <input type="number" name="web_server_port" value="" min="1" max="65535" class="input">
               <p class="form-hint">建议跟 bindPort 不同,填 5067 即可</p>
             </div>
           </div>
           <div class="form-grid2">
             <div>
               <label class="form-label">面板用户名</label>
-              <input type="text" name="web_server_user" value="admin" class="input">
+              <input type="text" name="web_server_user" value="" class="input">
             </div>
             <div>
               <label class="form-label">面板密码</label>
-              <input type="password" name="web_server_password" value="admin123" class="input">
+              <input type="password" name="web_server_password" value="" class="input">
             </div>
           </div>
         </div>
@@ -1123,7 +1128,7 @@ function renderConfigFields() {
         <div class="form-grid2">
           <div>
             <label class="form-label">心跳间隔 (秒)</label>
-            <input type="number" name="transport_heartbeat_interval" value="30" min="10" class="input" data-field="transport_heartbeat_interval">
+            <input type="number" name="transport_heartbeat_interval" value="" min="10" class="input" data-field="transport_heartbeat_interval">
             <p class="form-hint">每 30 秒发一次心跳,保持长连接不断。填 0 表示不发心跳(会周期性断线)</p>
           </div>
           <div>
@@ -1167,7 +1172,7 @@ function renderServersSection() {
         </div>
         <div>
           <label class="form-label">端口</label>
-          <input type="number" value="${s.serverPort||2005}" data-field="serverPort" class="input">
+          <input type="number" value="${s.serverPort||''}" data-field="serverPort" class="input">
         </div>
         <div>
           <label class="form-label">Token (跟服务端 frps 的一致)</label>
@@ -1219,7 +1224,7 @@ function renderProxyRow(p, i) {
       <div class="form-grid2" style="margin-bottom:.6rem;">
         <div>
           <label class="form-label">服务在哪个地址? (localIP)</label>
-          <input type="text" value="${escapeHtml(p.local_ip||'127.0.0.1')}" data-field="local_ip" class="input">
+          <input type="text" value="${escapeHtml(p.local_ip||'')}" data-field="local_ip" class="input">
           <p class="form-hint">127.0.0.1 = 就在本机(NAS自己)。一般不用改</p>
         </div>
         <div>
@@ -1257,7 +1262,7 @@ function renderProxyRow(p, i) {
 }
 
 function addServer() {
-  newInstanceState.servers.push({ name: 'srv'+(newInstanceState.servers.length+1), serverAddr: '', serverPort: 2005, token: '' });
+  newInstanceState.servers.push({ name: 'srv'+(newInstanceState.servers.length+1), serverAddr: '', serverPort: '', token: '' });
   renderServersSection();
 }
 function removeServer(i) {
@@ -1266,7 +1271,7 @@ function removeServer(i) {
 }
 function addProxy() {
   const n = newInstanceState.proxies.length + 1;
-  newInstanceState.proxies.push({ name: 'proxy'+n, type: 'tcp', local_ip: '127.0.0.1', local_port: 80, remote_port: 8080+n, custom_domains: [] });
+  newInstanceState.proxies.push({ name: '', type: 'tcp', local_ip: '', local_port: '', remote_port: '', custom_domains: [] });
   renderProxiesSection();
 }
 function removeProxy(i) {
@@ -1277,10 +1282,10 @@ function onProxyTypeChange(i, val) {
   newInstanceState.proxies[i].type = val;
   // 切换类型时,根据新类型补默认字段
   if (['http','https'].includes(val)) {
-    newInstanceState.proxies[i].custom_domains = ['example.com'];
+    newInstanceState.proxies[i].custom_domains = [''];
     delete newInstanceState.proxies[i].remote_port;
   } else if (['tcp','udp'].includes(val)) {
-    newInstanceState.proxies[i].remote_port = newInstanceState.proxies[i].remote_port || (8080+i+1);
+    newInstanceState.proxies[i].remote_port = newInstanceState.proxies[i].remote_port || '';
     delete newInstanceState.proxies[i].custom_domains;
   } else if (['stcp','xtcp'].includes(val)) {
     newInstanceState.proxies[i].secret_key = newInstanceState.proxies[i].secret_key || '';
@@ -1291,8 +1296,8 @@ function onTypeChange(val) {
   // 切换 frps/frpc 时,重置配置字段
   newInstanceState.type = val;
   if (val === 'frpc') {
-    newInstanceState.servers = newInstanceState.servers.length ? newInstanceState.servers : [{ name: 'default', serverAddr: '', serverPort: 2005, token: '' }];
-    newInstanceState.proxies = newInstanceState.proxies.length ? newInstanceState.proxies : [{ name: 'proxy1', type: 'tcp', local_ip: '127.0.0.1', local_port: 80, remote_port: 8080, custom_domains: [] }];
+    newInstanceState.servers = newInstanceState.servers.length ? newInstanceState.servers : [{ name: 'default', serverAddr: '', serverPort: '', token: '' }];
+    newInstanceState.proxies = newInstanceState.proxies.length ? newInstanceState.proxies : [{ name: '', type: 'tcp', local_ip: '', local_port: '', remote_port: '', custom_domains: [] }];
   } else {
     newInstanceState.servers = [];
     newInstanceState.proxies = [];
@@ -1921,7 +1926,7 @@ function renderProxyModal() {
           <div class="form-grid2" style="margin-bottom:.9rem;">
             <div>
               <label class="form-label">本地 IP</label>
-              <input type="text" id="proxy-local-ip" value="${p.local_ip || '127.0.0.1'}" class="input">
+              <input type="text" id="proxy-local-ip" value="${p.local_ip || ''}" class="input">
             </div>
             <div>
               <label class="form-label">本地端口 <span style="color:var(--danger-fg)">*</span></label>
@@ -2005,21 +2010,24 @@ function renderAuthGateFields(p) {
         <span class="form-hint" style="font-weight:normal;">在 frpc 侧加一层鉴权,请求先验证再转发到后端</span>
       </label>
       <div id="proxy-auth-config" style="${enabled ? '' : 'display:none;'}margin-top:.8rem;">
+        <div style="background:var(--bg-secondary,#f8fafc);padding:.5rem .7rem;border-radius:.4rem;margin-bottom:.8rem;font-size:.8rem;color:var(--muted,inherit);">
+          两步配置：<b>① 管"谁可以访问"</b>（外部访问者凭据）→ 通过后 <b>② 管"后端认不认"</b>（转发给后端时要不要带它的凭证）
+        </div>
         <div class="form-grid2" style="margin-bottom:.8rem;">
           <div>
-            <label class="form-label">鉴权方式</label>
+            <label class="form-label">① 鉴权方式(外部访问者怎么通过)</label>
             <select id="proxy-auth-mode" class="input" onchange="onAuthModeChange(this.value)">
-              <option value="basic" ${mode==='basic'?'selected':''}>Basic Auth(用户名+密码)</option>
-              <option value="bearer" ${mode==='bearer'?'selected':''}>Bearer Token</option>
-              <option value="apikey" ${mode==='apikey'?'selected':''}>API Key(自定义头)</option>
-              <option value="url_token" ${mode==='url_token'?'selected':''}>URL Token(?param=xxx)</option>
-              <option value="any" ${mode==='any'?'selected':''}>Any(任一命中)</option>
+              <option value="basic" ${mode==='basic'?'selected':''}>Basic Auth — 用户名+密码(浏览器弹窗)</option>
+              <option value="bearer" ${mode==='bearer'?'selected':''}>Bearer Token — 请求头 Authorization: Bearer</option>
+              <option value="apikey" ${mode==='apikey'?'selected':''}>API Key — 自定义请求头</option>
+              <option value="url_token" ${mode==='url_token'?'selected':''}>URL Token — 网址 ?token=xxx（推荐）</option>
+              <option value="any" ${mode==='any'?'selected':''}>Any — 上面任一命中即可</option>
             </select>
           </div>
-          <div>
-            <label class="form-label">Realm(领域名)</label>
+          <div id="proxy-auth-realm-wrap" style="${mode==='basic'?'':'display:none;'}">
+            <label class="form-label">Basic 弹窗提示文字(可随意改)</label>
             <input type="text" id="proxy-auth-realm" value="${p.auth_realm ? escapeHtml(p.auth_realm) : 'Protected'}" class="input">
-            <p class="form-hint">Basic Auth 弹窗显示的领域名</p>
+            <p class="form-hint">仅浏览器弹窗显示的提示，如"请输入密码"，不影响功能</p>
           </div>
         </div>
         <div id="proxy-auth-basic" style="display:none;margin-bottom:.8rem;">
@@ -2037,7 +2045,11 @@ function renderAuthGateFields(p) {
         <div id="proxy-auth-tokens" style="display:none;margin-bottom:.8rem;">
           <label class="form-label">Token 列表 <span style="color:var(--danger-fg)">*</span></label>
           <textarea id="proxy-auth-tokens-text" rows="3" class="input" style="resize:vertical;font-family:monospace;">${escapeHtml(tokens)}</textarea>
-          <p class="form-hint">每行一个 token,任何一行匹配即放行</p>
+          <div style="margin-top:.4rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
+            <button type="button" onclick="genToken()" class="btn-secondary btn-sm">🎲 生成 Token</button>
+            <span class="form-hint">点击生成强随机 token,自动追加到上方列表(每行一个)</span>
+          </div>
+          <p class="form-hint" style="margin-top:.3rem;">每行一个 token,任何一行匹配即放行</p>
         </div>
         <div id="proxy-auth-apikey-header" style="display:none;margin-bottom:.8rem;">
           <label class="form-label">自定义头名</label>
@@ -2061,6 +2073,41 @@ function renderAuthGateFields(p) {
           <textarea id="proxy-auth-bypass" rows="2" class="input" style="resize:vertical;font-family:monospace;">${escapeHtml(bypass)}</textarea>
           <p class="form-hint">每行一个路径,精确匹配或前缀匹配(如 /health)</p>
         </div>
+        <div style="margin-bottom:.8rem;border-top:1px dashed var(--border-color);padding-top:.8rem;">
+          <label class="form-label">② 后端服务需要凭证吗？</label>
+          <p class="form-hint" style="margin-top:0;">网关校验外部访问者通过后，转发给后端时要不要带凭证。</p>
+          <div class="form-grid2" style="margin-bottom:.6rem;">
+            <div>
+              <select id="proxy-auth-upstream-mode" class="input" onchange="onAuthUpstreamModeChange(this.value)">
+                <option value="none" ${(p.auth_upstream_mode||'none')==='none'?'selected':''}>不需要 — 后端无鉴权，直接转发（最常见）</option>
+                <option value="query" ${(p.auth_upstream_mode||'')==='query'?'selected':''}>需要 — 网址参数(?token=xxx)</option>
+                <option value="bearer" ${(p.auth_upstream_mode||'')==='bearer'?'selected':''}>需要 — Bearer 头(Authorization)</option>
+                <option value="header" ${(p.auth_upstream_mode||'')==='header'?'selected':''}>需要 — 自定义头</option>
+                <option value="basic" ${(p.auth_upstream_mode||'')==='basic'?'selected':''}>需要 — Basic 用户名+密码</option>
+              </select>
+            </div>
+          </div>
+          <div id="proxy-auth-upstream-fields" style="${(p.auth_upstream_mode||'none')==='none'?'display:none;':''}padding-top:.5rem;">
+            <div id="proxy-auth-upstream-user-wrap" style="${(p.auth_upstream_mode||'')==='basic'?'':'display:none;'}margin-bottom:.6rem;">
+              <label class="form-label">后端 Basic 用户名</label>
+              <input type="text" id="proxy-auth-upstream-user" value="${p.auth_upstream_user ? escapeHtml(p.auth_upstream_user) : ''}" class="input">
+            </div>
+            <div class="form-grid2">
+              <div>
+                <label class="form-label">${(p.auth_upstream_mode||'')==='basic' ? '后端密码' : '后端 Token / 凭证'}</label>
+                <input type="text" id="proxy-auth-upstream-token" value="${p.auth_upstream_token ? escapeHtml(p.auth_upstream_token) : ''}" class="input" placeholder="后端验证用的 token / 密码">
+              </div>
+              <div id="proxy-auth-upstream-param-wrap" style="${(p.auth_upstream_mode||'')==='query'?'':'display:none;'}">
+                <label class="form-label">URL 参数名</label>
+                <input type="text" id="proxy-auth-upstream-param" value="${p.auth_upstream_param ? escapeHtml(p.auth_upstream_param) : 'token'}" class="input">
+              </div>
+            </div>
+            <div id="proxy-auth-upstream-header-wrap" style="${(p.auth_upstream_mode||'')==='header'?'':'display:none;'}margin-top:.6rem;">
+              <label class="form-label">自定义头名</label>
+              <input type="text" id="proxy-auth-upstream-header" value="${p.auth_upstream_header ? escapeHtml(p.auth_upstream_header) : 'X-API-Key'}" class="input">
+            </div>
+          </div>
+        </div>
         <div id="proxy-auth-expiry" style="display:none;margin-bottom:.8rem;">
           <label class="form-label">Token 过期时间(可选)</label>
           <input type="datetime-local" id="proxy-auth-token-expiry" value="${p.auth_token_expiry ? p.auth_token_expiry.slice(0,16) : ''}" class="input">
@@ -2074,11 +2121,39 @@ function renderAuthGateFields(p) {
     </div>
   `;
   onAuthModeChange(mode);
+  onAuthUpstreamModeChange(p.auth_upstream_mode || 'none');
+}
+
+function onAuthUpstreamModeChange(mode) {
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  const needed = mode !== 'none';
+  show('proxy-auth-upstream-fields', needed);          // "不需要"时折叠后端凭证区
+  show('proxy-auth-upstream-header-wrap', mode === 'header');
+  show('proxy-auth-upstream-param-wrap', mode === 'query');
+  show('proxy-auth-upstream-user-wrap', mode === 'basic');
 }
 
 function onAuthToggle(checked) {
   const cfg = document.getElementById('proxy-auth-config');
   if (cfg) cfg.style.display = checked ? '' : 'none';
+}
+
+async function genToken() {
+  // 生成强随机 token 并追加到 Token 列表
+  try {
+    const r = await api('/api/auth-gate/gen-token', { method: 'POST', body: '{}' });
+    const tok = r.token || '';
+    if (!tok) { toast('生成失败', 'error'); return; }
+    const ta = document.getElementById('proxy-auth-tokens-text');
+    if (!ta) return;
+    const cur = (ta.value || '').split('\n').map(s => s.trim()).filter(Boolean);
+    cur.push(tok);
+    ta.value = cur.join('\n');
+    toast(`已生成 token: ${tok.slice(0,12)}...`, 'success');
+  } catch (e) {
+    if (e && e.authExpired) return;
+    toast(`生成失败: ${e.message}`, 'error');
+  }
 }
 
 function onAuthModeChange(mode) {
@@ -2089,6 +2164,7 @@ function onAuthModeChange(mode) {
   show('proxy-auth-tokens', isToken);
   show('proxy-auth-apikey-header', mode === 'apikey' || mode === 'any');
   show('proxy-auth-url-token', mode === 'url_token' || mode === 'any');
+  show('proxy-auth-realm-wrap', mode === 'basic' || mode === 'any');
   show('proxy-auth-expiry', mode !== 'basic' && mode !== 'none' && mode !== 'any');
 }
 
@@ -2173,6 +2249,15 @@ function renderAuthGateModal(status, stats) {
             <div><span class="form-hint">最后活跃</span> <span>${lastTs}</span></div>
           </div>
           ${reasonHtml ? `<div style="margin-top:.4rem;">${reasonHtml}</div>` : ''}
+          ${(p.tokens && p.tokens.length) ? `
+            <div style="margin-top:.5rem;border-top:1px solid var(--border-color);padding-top:.5rem;">
+              <div class="form-hint" style="margin-bottom:.3rem;">🔑 访问 Token(${p.mode === 'url_token' ? `URL 参数 ${escapeHtml(p.token_param || 'token')}` : (p.mode === 'apikey' ? `头 ${escapeHtml(p.token_header || 'X-API-Key')}` : '请求头')})</div>
+              ${p.tokens.map(t => `
+                <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.25rem;font-family:monospace;font-size:.78rem;">
+                  <span style="word-break:break-all;">${escapeHtml(String(t).split('|')[0])}</span>
+                  <button class="btn-ghost btn-sm" onclick="navigator.clipboard.writeText('${escapeHtml(String(t).split('|')[0])}');toast('已复制','success')">📋 复制</button>
+                </div>`).join('')}
+            </div>` : ''}
         </div>`;
     }).join('');
   }
@@ -2181,21 +2266,24 @@ function renderAuthGateModal(status, stats) {
     ? '<span class="badge badge-green">🟢 运行中</span>'
     : '<span class="badge badge-gray">⚪ 未运行</span>';
 
-  openModal(`
-    <div style="max-width:42rem;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-        <h2 style="font-size:1.1rem;font-weight:700;margin:0;">🛡 鉴权网关状态</h2>
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-card" style="max-width:42rem;width:100%;">
+      <div class="modal-head">
+        <h3 style="margin:0;">🛡 鉴权网关状态</h3>
         <button onclick="closeModal()" class="btn-ghost btn-icon">✕</button>
       </div>
-      <div style="margin-bottom:1rem;">
-        <span class="form-hint">进程状态</span> ${procStatus}
-        ${proc.pid ? `<span class="form-hint">PID ${proc.pid}</span>` : ''}
-        <span class="form-hint">| 规则数 ${status.rules_count || 0}</span>
-        <button onclick="showAuthGateStatus()" class="btn-ghost btn-sm" style="margin-left:.5rem;">🔄 刷新</button>
+      <div style="padding:1rem;">
+        <div style="margin-bottom:1rem;">
+          <span class="form-hint">进程状态</span> ${procStatus}
+          ${proc.pid ? `<span class="form-hint">PID ${proc.pid}</span>` : ''}
+          <span class="form-hint">| 规则数 ${status.rules_count || 0}</span>
+          <button onclick="showAuthGateStatus()" class="btn-ghost btn-sm" style="margin-left:.5rem;">🔄 刷新</button>
+        </div>
+        <div id="auth-gate-proxies">${proxiesHtml}</div>
       </div>
-      <div id="auth-gate-proxies">${proxiesHtml}</div>
     </div>
-  `);
+  `;
+  document.getElementById('modal-container').classList.remove('hidden');
 }
 
 async function submitProxy(e) {
@@ -2281,6 +2369,17 @@ async function submitProxy(e) {
       if (expiryEl && expiryEl.style.display !== 'none') {
         const val = document.getElementById('proxy-auth-token-expiry').value;
         data.auth_token_expiry = val ? val + ':00' : null;
+      }
+      // 后端转发凭证（上游注入）
+      const upModeEl = document.getElementById('proxy-auth-upstream-mode');
+      if (upModeEl) {
+        const upMode = upModeEl.value;
+        data.auth_upstream_mode = upMode;
+        data.auth_upstream_token = document.getElementById('proxy-auth-upstream-token').value.trim();
+        data.auth_upstream_header = document.getElementById('proxy-auth-upstream-header').value.trim() || 'X-API-Key';
+        data.auth_upstream_param = document.getElementById('proxy-auth-upstream-param').value.trim() || 'token';
+        data.auth_upstream_user = document.getElementById('proxy-auth-upstream-user').value.trim();
+        data.auth_upstream_pass = data.auth_upstream_token; // basic 模式下 token 栏填密码
       }
     } else {
       data.auth_enabled = false;
