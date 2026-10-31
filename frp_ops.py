@@ -10,6 +10,7 @@ Docker 模式通过 docker python SDK 操作,需要在容器外(或挂载 docker
 
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -152,6 +153,23 @@ def _read_pid(instance_name: str, config_path: str = None) -> Optional[int]:
                     # 僵尸进程:进程已死但父进程没回收,删除 PID 文件
                     os.remove(pf)
                     return None
+                # 防 PID 复用误判:容器重启后旧 pid 可能被新进程占用,
+                # 必须校验该进程 cmdline 确实匹配本实例的配置文件。
+                if config_path:
+                    cmd = ""
+                    try:
+                        with open(f"/proc/{pid}/cmdline", "rb") as f:
+                            cmd = f.read().replace(b"\x00", b" ").decode(errors="replace")
+                    except (FileNotFoundError, PermissionError, ProcessLookupError):
+                        cmd = ""
+                    cfg_abs = os.path.abspath(config_path)
+                    if cmd and cfg_abs not in cmd and cfg_abs.rstrip('/') not in cmd:
+                        # pid 被其他进程占用(旧 PID 文件残留)
+                        try:
+                            os.remove(pf)
+                        except OSError:
+                            pass
+                        return _find_pid_by_config(instance_name, config_path)
                 return pid
             except (ProcessLookupError, PermissionError):
                 os.remove(pf)
