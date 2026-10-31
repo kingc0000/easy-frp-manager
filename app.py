@@ -590,7 +590,15 @@ def _regenerate_auth_gate_rules():
                     "pass_hash": p.get("auth_basic_pass_hash") or "",
                     "salt": p.get("auth_basic_salt") or "",
                 } if p.get("auth_basic_user") else None,
-            }
+                # 上游凭证注入（后端自带鉴权场景）
+                "auth_upstream_mode": p.get("auth_upstream_mode") or "none",
+                "auth_upstream_token": p.get("auth_upstream_token") or "",
+                "auth_upstream_header": p.get("auth_upstream_header") or "Authorization",
+                "auth_upstream_param": p.get("auth_upstream_param") or "token",
+                "auth_upstream_user": p.get("auth_upstream_user") or "",
+                "auth_upstream_pass": p.get("auth_upstream_pass") or "",
+            "auth_upstream_cookie": bool(p.get("auth_upstream_cookie")),
+        }
 
     rule_path = str(CONFIG_DIR / "auth-gate.json")
     if not rules:
@@ -915,6 +923,13 @@ def _build_rule_from_proxy(p):
             "pass_hash": p.get("auth_basic_pass_hash") or "",
             "salt": p.get("auth_basic_salt") or "",
         } if p.get("auth_basic_user") else None,
+        "auth_upstream_mode": p.get("auth_upstream_mode") or "none",
+        "auth_upstream_token": p.get("auth_upstream_token") or "",
+        "auth_upstream_header": p.get("auth_upstream_header") or "Authorization",
+        "auth_upstream_param": p.get("auth_upstream_param") or "token",
+        "auth_upstream_user": p.get("auth_upstream_user") or "",
+        "auth_upstream_pass": p.get("auth_upstream_pass") or "",
+        "auth_upstream_cookie": bool(p.get("auth_upstream_cookie")),
     }
 
 
@@ -963,12 +978,37 @@ def api_auth_gate_status(ctx):
             "mode": rule.get("mode"),
             "realm": rule.get("realm"),
             "token_expiry": rule.get("token_expiry"),
+            # 供前端展示/查询 token（在 frpm 可查）
+            "tokens": rule.get("tokens") or [],
+            "token_header": rule.get("token_header"),
+            "token_param": rule.get("token_param"),
         })
     return 200, {
         "process": proc,
         "rules_count": len(rules),
         "proxies": proxies,
     }
+
+
+@app.post("/api/auth-gate/gen-token")
+def api_auth_gate_gen_token(ctx):
+    """生成强随机 Token（供前端"生成 Token"按钮使用）。
+
+    body: {length?, prefix?}
+    返回: {token}
+    """
+    import secrets
+    body = ctx["body"] or {}
+    try:
+        length = int(body.get("length") or 32)
+    except (TypeError, ValueError):
+        length = 32
+    length = max(8, min(64, length))
+    prefix = str(body.get("prefix") or "").strip()
+    tok = secrets.token_urlsafe(48).replace("-", "").replace("_", "")[:length]
+    if prefix:
+        tok = prefix + tok
+    return 200, {"token": tok, "length": len(tok)}
 
 
 @app.get("/api/auth-gate/stats")
@@ -1582,6 +1622,12 @@ def _auto_recover_instances():
                 recovered += 1
 
     log(f"[*] 自动恢复完成: {recovered} 个实例已重启")
+    # 启动时恢复 auth-gate 规则与进程(容器重建后 auth-gate 进程会丢失)
+    try:
+        _regenerate_auth_gate_rules()
+        log("[*] auth-gate 规则已重生成并启动")
+    except Exception as e:
+        log(f"[!] auth-gate 恢复失败: {e}")
     return recovered
 
 
